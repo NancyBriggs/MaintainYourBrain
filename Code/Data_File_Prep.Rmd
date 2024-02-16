@@ -1,0 +1,910 @@
+---
+title: "Data Merging and Calcuation"
+author: "Nancy Briggs"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(warn=1)
+
+
+library(tidyverse)
+library(kableExtra)
+```
+
+Updated "`r Sys.Date()`"
+
+
+
+Updates 11 May 2023
+
+- Added in LOGOS data: Please create a ‘total learning score’ by summing variables [audio1_wordcount], [audio2_wordcount], [audio3_wordcount] in the baseline dataset then in the follow-up dataset
+Analysis using the newly created total learning score (first 3 trials) and [audio4_wordcount] (delayed trial) – you’ll need to combine baseline dataset with follow-up.
+
+- Added in BMI data
+For BMI, the 4 variables of interest are: rcal_mybBMI, cl2_bmi_fu1, cl2_bmi_fu2, cl2_bmi_fu3
+
+
+
+
+
+Updates 4 April 2023
+
+  - Adding in code for Secondary outcomes. 
+    - MEDICULTotal
+    - Days of resistance training per week
+    - Minutes Aerobic (from HAQ)
+
+
+Updates 29 March March 2023
+
+  - Adding in code for Engagement 
+
+
+Updates 9 Nov 2022
+
+  - As per email, Nov 5, 2022 from Henry Brodaty:
+    - ADRI at baseline (`adri_baseline` for the covariates) should now be based on `adritotal` (`bl_adritotal` in the original SPSS file)
+    - Removed completely from the datasets the participants eligible for <=1 module
+      - this results in N=6104.
+    
+
+Updates 3 July June 2022:
+
+- As per email from Megan, ADRI variable is `sum_newadri_bl`. If this variable is missing, then `adti_total` is used
+- new variable to use as covariate is called `adri_baseline`
+
+
+Updates 29 June 2022:
+
+- New datasets imported:
+  - mybm_b_demos_v4.1_20181018 (DON'T NEED AS IT IS THE SAME AS CURRENT DEMO DATATSET)
+  - tempmh_mybm_missing_20220617
+
+- adri total for covariate
+Any other variables for imputation model
+
+Updates 22 June 2022:
+
+- Importing updated data sets. Old datasets archived.
+
+
+Updates 02 June 2022:
+
+Changes include:
+
+- Reversing coding reaction time tests: Detection (test_id==5), Identification (test_id==6),
+One Back (test_id==7)
+- 2 sets of z-scores calculated:
+  - z-scores scaled from whole Baseline sample
+  - z-scores scaled from age / sex / education stratified Baseline groups
+
+
+Still to do after meeting with Megan, 01 June 2022 
+- Use datasets with a few changed age / sex values (DONE 22/06/2022)
+- Descriptives of overall and domain-specific z-scores at each time point for each randomisation group  (DONE 02/06/2022)
+
+## Importing data
+
+All datasets were exported to CSV format from SPSS.  The CSV files are imported into R.
+
+```{r dataimport}
+
+# Status Index data
+st.index <- read.csv("../Data/mybm_status_index_20220422.csv",header = TRUE,
+                 fileEncoding = "UTF-8-BOM")
+
+# Demographics data
+demo <- read.csv("../Data/mybm_b_demos_v3.1_20181018.csv",header = TRUE,
+                 fileEncoding = "UTF-8-BOM")
+
+# Group Allocation
+group <- read.csv("../Data/mybm_b_group_v1.0_20181018.csv",header = TRUE,
+                 fileEncoding = "UTF-8-BOM")
+
+# Trial Activities
+st.trial <- read.csv("../Data/mybm_status_trial_20220422.csv",header = TRUE,
+                 fileEncoding = "UTF-8-BOM")
+
+# Cognition Outcomes
+cogout <- read.csv("../Data/mybm_full_cogout_20220422.csv",header = TRUE,
+                 fileEncoding = "UTF-8-BOM")
+
+# adritotal and some potential imputation predictors
+adri <- read.csv("../Data/tempmh_mybm_missing_20220617.csv",header = TRUE,
+                 fileEncoding = "UTF-8-BOM")
+
+# adri_time <- read.csv("../Data/stats_mybm_adri_20220914_long.csv",header = TRUE,
+#                  fileEncoding = "UTF-8-BOM")
+
+
+# Secondary outcomes
+
+# Medicul total
+dietb <- read.csv("../Data/mybm_b_diet_v2.0_20181018.csv",header = TRUE,
+                 fileEncoding = "UTF-8-BOM")
+dietf <- read.csv("../Data/mybm_fu_diet_v1.3_20220412.csv",header = TRUE,
+                 fileEncoding = "UTF-8-BOM")
+
+# Phys Activity outcomes: Days / week of resistance, minutes of aerobic
+pab <- read.csv("../Data/mybm_b_brief_paqu_v5.0_20181018.csv",header = TRUE,
+                 fileEncoding = "UTF-8-BOM")
+paf <- read.csv("../Data/mybm_fu_brief_paqu_v1.3_20220506.csv",header = TRUE,
+                 fileEncoding = "UTF-8-BOM")
+
+# K10
+k10b <- read.csv("../Data/mybm_b_wellb_v1.1_20181018.csv",header = TRUE,
+                 fileEncoding = "UTF-8-BOM")
+k10f <- read.csv("../Data/mybm_fu_wellb_20220407.csv",header = TRUE,
+                 fileEncoding = "UTF-8-BOM")
+
+# BMI
+bmi <- read.csv("../Data/mybm_xx_newbody_20230509.csv",header = TRUE,
+                 fileEncoding = "UTF-8-BOM")
+
+
+
+```
+
+
+
+## Relevant variables for merging and analysis
+
+
+- st.index
+  - randomisation_status
+  - id_mask
+  - myb_trial_status
+  - rcal_modules_sum
+- st.trial
+  - activity_title
+  - module_title
+  - rc_title
+  - tpa_status
+- cogout
+  - activity_title
+  - resultPrimaryOutcome
+  - test_name
+  - test_id
+- demo
+  - myb_age
+  - myb_gender
+  - cl_edu_yrs
+- adri
+  - adritotal
+  - sum_newadri_bl
+
+  
+  
+## Merging process
+
+- Create `BaselineSample` dataset:
+  - `st.index`: select rc_randomisation_status==1
+    - Keep relevant variables: id_mask, rc_randomisation_status, myb_trial_status, rcal_modules_sum
+  - Merge with `demo`
+    - Keep relevant variables: myb_age, myb_gender, cl_edu_yrs
+  - Merge with `group`
+    - Keep relevant variables: group_type_id
+  - merge with `adri`
+    - Keep relevant variables: adritotal, sum_newadri_bl (for analysis covariates)
+    - Keep variables for potential inclusion in imputation model: CalcK10SCore, rcal_mybBMI, rcal_total_energy, PREDIMEDTotal, smoking, everchol, everbp, LLS, CalcAnxietyScore, rc_phq9_total, rc_wellb_status, rc_paqu_status, rc_medh_status, rc_leq_status, rc_diet_status, rc_adri_status, rc_myb1_status 
+    
+
+- Create `cogprimary` dataset:
+  - Merge `BaselineSample` with  `st.trial`
+    - Keep relevant variables: rc_trial_time, myb_trial_status, activity_title, module_title, rc_title, tpa_status
+    - Keep observations (test scores) tpa_status=="Completed"
+  - Merge with `cogout` (key variables are id_mask, module_title(st.trial)/ module_name(cogout), activity_title(st.trial)/activity_name(cogout) )
+    - Keep relevant variables: test_name,test_id, resultPrimaryOutcome
+  
+  
+  
+
+```{r}
+
+BaselineSample <- st.index %>%
+  filter(rc_randomisation_status==1) %>%
+  dplyr::select(id_mask,rc_randomisation_status,myb_trial_status, rcal_modules_sum)  %>%  
+  left_join(., group, by="id_mask") %>%
+  relocate(group_type_id, .after=id_mask) %>%
+  left_join(.,demo, by="id_mask") %>%
+  dplyr::select(id_mask,rc_randomisation_status, myb_trial_status,
+                rcal_modules_sum, group_type_id, myb_age, myb_gender,
+                cl_edu_yrs) %>%
+  left_join(., select(adri, -c(rc_randomisation_status)), by="id_mask") %>%
+  mutate(adri_baseline=adritotal) %>%
+  dplyr::select(id_mask,rc_randomisation_status, myb_trial_status,
+                rcal_modules_sum, group_type_id, myb_age, myb_gender,
+                cl_edu_yrs, adritotal, sum_newadri_bl, adri_baseline, CalcK10Score, 
+                rcal_mybBMI, rcal_total_energy, PREDIMEDTotal,
+                smoking, everchol, everbp, LLS, CalcAnxietyScore, rc_phq9_total, rc_wellb_status,
+                rc_paqu_status, rc_medh_status, rc_leq_status, rc_diet_status, rc_adri_status,
+                rc_myb1_status) 
+
+#Remove module eligible<=1 people
+BaselineSample <- BaselineSample %>%
+  filter(rcal_modules_sum>1)
+    
+
+write.csv(BaselineSample, "../Data/BaselineSample.csv")
+
+
+cogprimary <- BaselineSample %>%
+  left_join(., st.trial, by=c("id_mask","rc_randomisation_status"))%>%
+  dplyr::select(id_mask,rc_randomisation_status,rc_trial_time, myb_trial_status, 
+                rcal_modules_sum, activity_title,module_title,rc_title,tpa_status, group_type_id, myb_age, myb_gender,
+                cl_edu_yrs,adri_baseline) %>%
+  filter(tpa_status=="Completed") %>%
+  left_join(.,cogout, by=c("id_mask","rc_randomisation_status", "module_title"="module_name",
+                           "activity_title"="activity_name" ) ) %>%
+  filter(activity_title=="Cognitive Assessment (Thinking)" | 
+        activity_title=="Cognitive Assessment (Cards)") %>%
+  dplyr::select(id_mask,rc_randomisation_status,rc_trial_time, myb_trial_status,
+                rcal_modules_sum,
+                activity_title,module_title,rc_title,tpa_status, test_name,test_id,
+                resultPrimaryOutcome, group_type_id, myb_age, myb_gender,
+                cl_edu_yrs,adri_baseline) %>%
+    mutate(ed_group=ifelse(cl_edu_yrs<12,0,1)) # For the zscore calculation
+
+```
+
+# Creating primary outcome dataset
+
+```{r}
+## Creating primary outcome dataset
+
+cogprimary <- cogprimary %>%
+  
+  # reverse coding Detection, Identification, One Back
+  mutate(resultPrimaryOutcome=ifelse(test_id %in% c(5,6,7), 
+                                     (-1 * resultPrimaryOutcome), 
+                                     resultPrimaryOutcome)) %>%
+  
+  # create domain category variable
+  mutate(domain=ifelse(test_id %in% c(5,6), 1,
+                ifelse(test_id %in% c(7, 21,24), 2,
+                ifelse(test_id %in% c(8,23), 3, 0))) )  %>%
+
+  # Must make sure that each person at each timepoint has at least 2 scores
+  # First, count valid scores at each time for each person within each domain
+  # count number of valid test scores for each domain within each person
+  group_by(id_mask, rc_trial_time, domain) %>%
+  mutate(n_tests=n())  %>%
+  group_by(rc_trial_time, test_id) %>%
+  # filter out people with only 1 score for a domain
+  # if you want to know how many are filtered out, you can create a new dataset here.
+  #filter(n_tests>=2) %>%
+  filter(rc_trial_time %in% c(1,10,11,12) ) 
+
+```
+
+## Scaling by Baseline
+
+```{r}
+  # Averaging Domains 
+# Complex Attention (Cogstate Detection, Cogstate Identification)
+# Executive Function (Cogstate One Back, Cambridge Brain Sciences Spatial (tokens) Search, Cambridge Brain Sciences Grammatical Reasoning)
+# Learning and Memory (Cogstate One Card Learning and Cambridge Brain Sciences Paired Associates)
+
+
+
+# Create dataset with values for tests.  
+scaling_baseline <- cogprimary %>%
+  # calculate full mean and SD at baseline
+  filter(rc_trial_time==1) %>%
+  group_by(test_id) %>%
+  mutate(mean_f_baseline=mean(resultPrimaryOutcome),        
+         sd_f_baseline  =sd(resultPrimaryOutcome) ) %>%
+  
+  # and stratified mean and SD at each timepoint
+  ungroup %>%
+  group_by(myb_age, myb_gender, ed_group, test_id) %>%
+  mutate(mean_s_baseline=mean(resultPrimaryOutcome),        
+         sd_s_baseline  =sd(resultPrimaryOutcome) ) %>%
+  ungroup %>%
+  select(c(id_mask, test_id, starts_with("mean_"), starts_with("sd_"))) 
+  
+
+
+##### Gordana changed things starting here
+
+
+# merge test scores with baseline statistics
+domains <- cogprimary %>%
+  left_join(., scaling_baseline, by=c("id_mask", "test_id")) %>%
+  
+  # Calculate test_id z scores
+  # Full Baseline
+  mutate(z_full=ifelse(n_tests>=2,
+                       ((resultPrimaryOutcome-mean_f_baseline) /sd_f_baseline ), 
+                        NA) )   %>%
+  mutate(z_strat=ifelse(n_tests>=2,
+                        ((resultPrimaryOutcome-mean_s_baseline)/sd_s_baseline ), 
+                        NA) ) %>%
+
+  # Calculate domain averages
+  group_by(id_mask,rc_trial_time, domain) %>%
+  summarise(domainmean_full=mean(z_full), 
+            domainmean_strat=mean(z_strat)) %>%
+
+  ungroup() %>%
+  group_by(id_mask,rc_trial_time) %>%
+
+  # pivot to wide so we have individual domain mean scores 
+  pivot_wider(values_from = c(domainmean_full, domainmean_strat), 
+              names_from = domain) %>% 
+  ungroup()
+
+### domain standerdisation
+domain_baseline_means <- domains %>% 
+    # calculate full mean and SD at baseline
+  filter(rc_trial_time==1) %>%
+  mutate(mean_d1_full = mean(domainmean_full_1 ),        
+         sd_d1_full  = sd(domainmean_full_1 ) ,
+         mean_d2_full = mean(domainmean_full_2 ),        
+         sd_d2_full  = sd(domainmean_full_2 ) ,
+         mean_d3_full = mean(domainmean_full_3 ),        
+         sd_d3_full  = sd(domainmean_full_3 ) ) %>% 
+  select(id_mask, mean_d1_full, sd_d1_full, mean_d2_full, sd_d2_full, mean_d3_full, sd_d3_full)
+
+
+
+# standardise domains to baseline then calculate cogmeanz
+cogmeanz <- domains %>% 
+  left_join(., domain_baseline_means, by="id_mask") %>%
+  # finally, make one overall mean score
+ mutate(domainmean_full_1 = (domainmean_full_1 - mean_d1_full)/sd_d1_full,
+        domainmean_full_2 = (domainmean_full_2 - mean_d2_full)/sd_d2_full,
+        domainmean_full_3 = (domainmean_full_3 - mean_d1_full)/sd_d3_full) %>% 
+  rowwise() %>%
+  mutate(cogmeanz_full = mean(c(domainmean_full_1,domainmean_full_2, 
+                                domainmean_full_3))) %>%
+  # mutate(cogmeanz_strat = mean(c(domainmean_strat_1,domainmean_strat_2, 
+  #                                domainmean_strat_3)))
+  ungroup() %>% 
+  select( -mean_d1_full, -sd_d1_full, -mean_d2_full, -sd_d2_full, -mean_d3_full, -sd_d3_full)
+
+
+### cogmeanz standardisation
+cogprimary_baseline_means <- cogmeanz  %>% 
+  filter(rc_trial_time==1) %>%
+  mutate(mean_cogmeanz = mean(cogmeanz_full ),        
+         sd_cogmeanz  = sd(cogmeanz_full ) ) %>% 
+  select(id_mask, mean_cogmeanz, sd_cogmeanz)
+
+
+
+cogprimaryZ <- cogmeanz %>% 
+    left_join(., cogprimary_baseline_means, by="id_mask") %>%
+   mutate(cogmeanz_full = (cogmeanz_full - mean_cogmeanz)/sd_cogmeanz )
+
+
+
+# Now merge with BaselineSample to get the analysis dataset for the primary outcome
+cogprimaryZ <- cogprimaryZ %>%
+  full_join(., BaselineSample, by="id_mask")
+write.csv(cogprimaryZ,"../Data/cogprimary.csv", row.names = TRUE)
+
+```
+
+# Creating cognitive outcomes Secondary outcomes dataset
+
+
+```{r}
+## Creating secondary outcome dataset
+cogsecondary <- BaselineSample %>%
+  left_join(., st.trial, by=c("id_mask","rc_randomisation_status")) %>%
+  dplyr::select(id_mask,rc_randomisation_status,rc_trial_time, myb_trial_status, 
+                rcal_modules_sum, activity_title,module_title,rc_title,
+                tpa_status, group_type_id, myb_age, myb_gender,
+                cl_edu_yrs,adri_baseline) %>%
+  filter(tpa_status=="Completed") %>%
+  left_join(.,cogout, by=c("id_mask","rc_randomisation_status",
+                           "module_title"="module_name",
+                           "activity_title"="activity_name" ) ) %>%
+  filter(activity_title=="Cognitive Assessment (Thinking)" | 
+        activity_title=="Cognitive Assessment (Cards)") %>%
+  dplyr::select(id_mask,rc_randomisation_status,rc_trial_time, myb_trial_status,
+                rcal_modules_sum,
+                activity_title,module_title,rc_title,tpa_status, test_name,test_id,
+                resultPrimaryOutcome, group_type_id, myb_age, myb_gender,
+                cl_edu_yrs,adri_baseline) %>%
+    mutate(ed_group=ifelse(cl_edu_yrs<12,0,1)) # For the zscore calculation
+
+
+
+cogsecondary <- cogsecondary %>%
+  
+  # reverse coding Detection, Identification, One Back
+  mutate(resultPrimaryOutcome=ifelse(test_id %in% c(5,6,7), 
+                                     (-1 * resultPrimaryOutcome), 
+                                     resultPrimaryOutcome)) %>%
+  
+  filter(rc_trial_time %in% c(1,10,11,12) ) 
+
+```
+
+## Scaling by Baseline
+
+```{r}
+
+# Create dataset with values for tests.  
+scaling_baseline <- cogsecondary %>%
+  # calculate full mean and SD at baseline
+  filter(rc_trial_time==1) %>%
+  group_by(test_id) %>%
+  mutate(mean_f_baseline=mean(resultPrimaryOutcome),        
+         sd_f_baseline  =sd(resultPrimaryOutcome) ) %>%
+  
+  # and stratified mean and SD at each timepoint
+  ungroup %>%
+  group_by(myb_age, myb_gender, ed_group, test_id) %>%
+  mutate(mean_s_baseline=mean(resultPrimaryOutcome),        
+         sd_s_baseline  =sd(resultPrimaryOutcome) ) %>%
+  ungroup %>%
+  select(c(id_mask, test_id, starts_with("mean_"), starts_with("sd_"))) 
+  
+
+# merge test scores with baseline statistics
+cogsecondaryZ <- cogsecondary %>%
+  left_join(., scaling_baseline, by=c("id_mask", "test_id")) %>%
+  
+  # Calculate test_id z scores
+  # Full Baseline
+  mutate(test_full=(resultPrimaryOutcome-mean_f_baseline) /sd_f_baseline ) %>%
+  mutate(test_strat=(resultPrimaryOutcome-mean_s_baseline)/sd_s_baseline ) %>%
+  
+  dplyr::select(id_mask, rc_trial_time,test_full,test_strat, group_type_id,
+                test_name, rcal_modules_sum, myb_age, myb_gender, 
+                cl_edu_yrs, ed_group,adri_baseline) %>%
+  
+  mutate(test_name=str_replace_all(test_name, "[^[:alnum:]]", "")) %>%
+  
+  pivot_wider(values_from = c(test_full, test_strat), 
+              names_from = c(test_name)) 
+
+# save
+write.csv(cogsecondaryZ,"../Data/cogsecondary.csv", row.names = TRUE)
+
+```
+
+
+
+
+```{r, }
+
+# cogprimaryZ <- read.csv("../Data/cogprimary.csv")
+
+
+# save completers
+y3 <- cogprimaryZ  %>%
+  filter(rc_trial_time==12) %>%
+  dplyr::select(id_mask) 
+
+  
+completers <- y3 %>%
+  left_join(., cogprimaryZ, by="id_mask")
+write.csv(completers,"../Data/completers.csv", row.names = TRUE)
+
+```
+
+# Adri over time
+
+```{r}
+# adri_time1 <- adri_time %>%
+#   right_join(BaselineSample,by=c("id_mask") ) %>%
+#   filter(rcal_modules_sum>1)
+# write.csv(adri_time1,"../Data/adri_time.csv", row.names = TRUE)
+```
+
+# Modules datasets
+
+Importing activity datasets and calculating Engagement.
+
+Total engagement score for the modules is defined as:
+
+- Peace of Mind: Last lesson reached `last_lesson_reached`
+- PA: Count number of rows per participant
+- Nutrition: Count number of rows per participant
+- BTS: Over a total of 30 sessions, there are 17 exercises each session. Total engagement is the number of sessions for which all 17 exercises were completed.
+
+Then for each module, total engagement is categorised as:
+
+- None
+  - PoM: 0
+  - PA: 0
+  - Nutrition: 0
+  - BTS: 0
+- Partial
+  - PoM: 1-3
+  - PA: 1-5
+  - Nutrition: 1-5
+  - BTS: 1-22
+- Full
+  - PoM: 4-6
+  - PA: 6-10
+  - Nutrition: 6-10
+  - BTS: 23-30
+  
+These scores are calculated for `group_type_id`==2 only.
+
+## Binary Engagement  
+
+In order to facilitate a more simple examination of engagement, a binary indicator for those in the intervention group was also calculated.  A participant has a 1 if, for all their eligible modules, they showed *at least 60%* participation and a 0 otherwise.
+
+
+```{r}
+
+# To calculate engagement:
+# 
+# PoM – use the variable [last_lesson_reached]
+# PA and Nutrition – count number of rows per participant. You can also count [activity_title] per participant and also see which week they completed (each session corresponds to week as well).
+# BTS – there’s a row for each BT exercise a participant did for each session (17 exercises per session and 30 sessions in total). A session is incomplete unless you have all 17 exercises for that session. Therefore, you’ll need to count [activity_title] per session to measure engagement. [test_name] would indicate which exercise # they are up to. For example, if someone completed all 30 sessions, they would have 510 rows of data (17 exercises * 30 sessions).
+
+# Brain Training
+bts <- read.csv("../Data/mybm_active_bts_20210802.csv",header = TRUE,
+                 fileEncoding = "UTF-8-BOM")
+# Merge with eligibility for module to ensure that those eligible but with no
+# activity are still included.
+bts <- bts %>%
+  full_join(st.index, by="id_mask")%>%
+  filter(rc_randomisation_status==1) %>%
+  dplyr::select(id_mask, rcal_eligibility_bts,  activity_title, test_name, exercise_name ) %>%
+  filter(rcal_eligibility_bts==1) %>%
+  left_join(group, by="id_mask") %>%
+  filter(group_type_id==2) 
+# Engagement
+bts <- bts %>%
+  group_by(id_mask, activity_title,rcal_eligibility_bts) %>%
+  # If they have an activity title, then there is a 1. 
+  # If there is not an activity title, that means they are eligibile, but didnt
+  # do anything.
+  mutate(rec = ifelse(!is.na(activity_title), 1, 0)) %>%  
+  mutate(bts_bysession_csum = cumsum(rec)) %>%
+  # Get number of exercises completed in a session
+  summarise(bts_bysession_total=max(bts_bysession_csum)) %>%
+  # 17 exercises in a session is complete. <17 is incomplete
+  mutate(bts_bysession_total_yn=ifelse(bts_bysession_total==17,1,0)) %>%
+  # sum completes within person. Can have up to 30
+  group_by(id_mask, rcal_eligibility_bts) %>%
+  mutate(bts_engagement_total1 = cumsum(bts_bysession_total_yn)) %>%
+  # Get total number of complete sessions
+  summarise(bts_engagement_total=max(bts_engagement_total1)) %>%
+  dplyr::select(id_mask, bts_engagement_total, rcal_eligibility_bts) %>%
+  mutate(engagement_group_bts = ifelse(bts_engagement_total>=1 & bts_engagement_total<=22,1,
+                                ifelse(bts_engagement_total>22,2,0))) %>%
+  #if bts_engagement_total >=60% of 30 (highest engagement), then bts_engagement_bin=1
+  mutate(bts_engagement_bin = ifelse(bts_engagement_total>=18, 1,0) )
+  
+
+
+# Peace of Mind
+pom <- read.csv("../Data/mybm_active_pom_20221201.csv",header = TRUE,
+                 fileEncoding = "UTF-8-BOM")
+# Merge with eligibility for module to ensure that those eligible but with no
+# activity are still included.
+pom <- pom %>%
+  full_join(st.index, by="id_mask")%>%
+  filter(rc_randomisation_status==1) %>%
+  dplyr::select(id_mask, rcal_eligibility_pom, last_lesson_reached) %>%
+  filter(rcal_eligibility_pom==1) %>%
+  left_join(group, by="id_mask") %>%
+  filter(group_type_id==2) 
+# Engagement
+pom <- pom %>%
+  # If they have engaged at all, there will be a line in the PoM dataset.  
+  # If they were eligible and did NOT engage at all, include a 0. 
+  mutate(last_lesson_reached = ifelse(!is.na(last_lesson_reached), last_lesson_reached, 0)) %>%  
+  mutate(pom_engagement_total = last_lesson_reached) %>%
+  dplyr::select(id_mask, pom_engagement_total, rcal_eligibility_pom) %>%
+  mutate(engagement_group_pom = ifelse(pom_engagement_total>=1 & pom_engagement_total<=3,1,
+                                ifelse(pom_engagement_total>3,2,0))) %>%
+  #if pom_engagement_total >=60% of 6 (highest engagement), then pom_engagement_bin=1
+  mutate(pom_engagement_bin = ifelse(pom_engagement_total>=4, 1,0) )
+
+
+# Nutrition
+nutr <- read.csv("../Data/mybm_active_nutrition_20221116.csv",header = TRUE,
+                 fileEncoding = "UTF-8-BOM")
+# Merge with eligibility for module to ensure that those eligible but with no
+# activity are still included.
+nutr <- nutr %>%
+  full_join(st.index, by="id_mask")%>%
+  filter(rc_randomisation_status==1) %>%
+  dplyr::select(id_mask, rcal_eligibility_diet, activity_title) %>%
+  filter(rcal_eligibility_diet==1)%>%
+  left_join(group, by="id_mask") %>%
+  filter(group_type_id==2) 
+#Engagement
+nutr <- nutr %>%
+  group_by(id_mask, rcal_eligibility_diet) %>%
+  # If they have engaged at all, there will be a line in the nutr dataset.  
+  # If they were eligible and did NOT engage at all, include a 0. 
+  mutate(rec = ifelse(!is.na(activity_title), 1, 0)) %>%  
+  mutate(nutr_engagement_csum = cumsum(rec)) %>%
+  summarise(nutr_engagement_total=max(nutr_engagement_csum)) %>%
+  ungroup() %>%
+  mutate(engagement_group_nutr = ifelse(nutr_engagement_total>=1 & nutr_engagement_total<=5,1,
+                                 ifelse(nutr_engagement_total>5,2,0))) %>%
+  #if nutr_engagement_total >=60% of 10 (highest engagement), then nutr_engagement_bin=1
+  mutate(nutr_engagement_bin = ifelse(nutr_engagement_total>=6, 1,0) )
+
+
+# Physical Activity
+pa <- read.csv("../Data/mybm_active_full_pa_20221116.csv",header = TRUE,
+                 fileEncoding = "UTF-8-BOM")
+# Merge with eligibility for module to ensure that those eligible but with no
+# activity are still included.
+pa <- pa %>%
+  full_join(st.index, by="id_mask")%>%
+  filter(rc_randomisation_status==1) %>%
+  dplyr::select(id_mask, rcal_eligibility_pa,activity_title) %>%
+  filter(rcal_eligibility_pa==1)%>%
+  left_join(group, by="id_mask") %>%
+  filter(group_type_id==2) 
+# Engagement
+pa <- pa %>%
+  group_by(id_mask,rcal_eligibility_pa) %>%
+  # If they have engaged at all, there will be a line in the pa dataset.  
+  # If they were eligible and did NOT engage at all, include a 0. 
+  mutate(rec = ifelse(!is.na(activity_title), 1, 0)) %>%  
+  mutate(pa_engagement_csum = cumsum(rec)) %>%
+  summarise(pa_engagement_total=max(pa_engagement_csum)) %>%
+  ungroup() %>%
+  mutate(engagement_group_pa = ifelse(pa_engagement_total>=1 & pa_engagement_total<=5,1,
+                                 ifelse(pa_engagement_total>5,2,0))) %>%
+  #if nutr_engagement_total >=60% of 10 (highest engagement), then nutr_engagement_bin=1
+  mutate(pa_engagement_bin = ifelse(pa_engagement_total>=6, 1,0) )
+
+
+
+
+# Make engagement dataset with cogprimary
+
+engagement <- cogprimaryZ %>%
+  left_join(bts, by="id_mask") %>%
+  left_join(pom, by="id_mask") %>%
+  left_join(nutr, by="id_mask") %>%
+  left_join(pa, by="id_mask") %>%
+  rowwise() %>%
+  mutate(engagement= ifelse(group_type_id==2, (sum(engagement_group_pa,engagement_group_nutr,
+                         engagement_group_bts,engagement_group_pom,na.rm=TRUE) / rcal_modules_sum) ,NA  ) ) %>%
+  # replace noneligible people with a 0 for module eligibility variables
+  mutate(rcal_eligibility_bts =ifelse(is.na(rcal_eligibility_bts), 0,
+                                      rcal_eligibility_bts)) %>%
+  mutate(rcal_eligibility_pom =ifelse(is.na(rcal_eligibility_pom), 0,
+                                      rcal_eligibility_pom)) %>%
+  mutate(rcal_eligibility_diet=ifelse(is.na(rcal_eligibility_diet),0,
+                                      rcal_eligibility_diet)) %>%
+  mutate(rcal_eligibility_pa  =ifelse(is.na(rcal_eligibility_pa),  0,
+                                      rcal_eligibility_pa)) %>%
+# Now create overall Binary engagement indicator
+# becasue we are only concerned if an eligibale module has a 0 for engagement, 
+# change all NAs to 1, then take the product of all binary indicators.
+  mutate(bts_engagement_bin=ifelse(group_type_id==2 & is.na(bts_engagement_bin),1, bts_engagement_bin)) %>%
+  mutate(pom_engagement_bin=ifelse(group_type_id==2 & is.na(pom_engagement_bin),1, pom_engagement_bin)) %>%
+  mutate(nutr_engagement_bin=ifelse(group_type_id==2 & is.na(nutr_engagement_bin),1, nutr_engagement_bin )) %>%
+  mutate(pa_engagement_bin=ifelse(group_type_id==2 & is.na(pa_engagement_bin),1, pa_engagement_bin)) %>%
+  mutate(overall_engagement_bin=bts_engagement_bin*pom_engagement_bin*nutr_engagement_bin*pa_engagement_bin)
+  
+
+
+write.csv(engagement,"../Data/engagement.csv", row.names = TRUE)
+
+
+write.csv(bts,"../Data/bts.csv", row.names = TRUE)
+write.csv(nutr,"../Data/nutr.csv", row.names = TRUE)
+write.csv(pa,"../Data/pa.csv", row.names = TRUE)
+write.csv(pom,"../Data/pom.csv", row.names = TRUE)
+
+
+table(bts$engagement_group_bts)
+table(pom$engagement_group_pom)
+table(pa$engagement_group_pa)
+table(nutr$engagement_group_nutr)
+
+# check total score by group for PoM
+pom %>%
+  group_by(engagement_group_pom) %>%
+  summarise(min=min(pom_engagement_total), max=max(pom_engagement_total),
+            n=n())
+
+```
+
+
+
+```{r}
+
+
+```
+
+
+# Secondary Outcomes
+
+## MediCul
+
+Data are in the datasets: 
+
+- mybm_b_diet_v2.0_20181018.csv  (Baseline)
+- mybm_fu_diet_v1.3_20220412.csv (Follow up assessments)
+
+```{r}
+# get data together
+
+dietb <- dietb %>%
+  dplyr::select(id_mask, MEDICULTotal, MINICULTotal, module_title, 
+                tpa_status, test_name) %>%
+  mutate(rc_trial_time=1)
+dietf <- dietf %>%
+  dplyr::select(id_mask, MEDICULTotal, MINICULTotal, module_title, 
+                tpa_status, test_name) %>%
+  mutate(rc_trial_time=ifelse(module_title=="Followup Assessments", 10,
+                       ifelse(module_title=="Followup Assessments 2",11,
+                       ifelse(module_title=="Followup Assessments 3",12, NA
+                              ))) )
+diet <- bind_rows(dietb,dietf)
+
+# merge with baseline sample
+diet <- right_join(diet, BaselineSample, by="id_mask")
+
+write.csv(diet,"../Data/diet.csv", row.names = TRUE)
+
+```
+
+
+## Days per week of resistance training & Minutes aerobic from HAQ
+
+Data are in the datasets: 
+
+- mybm_b_brief_paqu_v5.0_20181018.csv (Baseline)
+- mybm_fu_brief_paqu_v1.3_20220506.csv (Follow up assessments)
+
+
+Variables are: 
+
+- V20: Days per week of resistance training
+- Minutes aerobic from HAQ: ncal_msaerobic_wk
+
+```{r}
+# get data together
+
+pab <- pab %>%
+  dplyr::select(id_mask, V20, ncal_msaerobic_wk, module_title, test_name) %>%
+  mutate(rc_trial_time=1)
+paf <- paf %>%
+  dplyr::select(id_mask, V20, ncal_msaerobic_wk, module_title, test_name) %>%
+  mutate(rc_trial_time=ifelse(module_title=="Followup Assessments", 10,
+                       ifelse(module_title=="Followup Assessments 2",11,
+                       ifelse(module_title=="Followup Assessments 3",12, NA
+                              ))) )
+pa <- bind_rows(pab,paf)
+
+# merge with baseline sample
+pa <- right_join(pa, BaselineSample, by="id_mask")
+
+write.csv(pa,"../Data/pa.csv", row.names = TRUE)
+
+
+```
+
+
+
+## K10
+
+Data are in the datasets: 
+
+- mybm_b_wellb_v1.1_20181018.csv (Baseline)
+- mybm_fu_wellb_20220407.csv (Follow up assessments)
+
+
+Variable is: 
+
+- CalcK10Score
+
+
+
+```{r}
+# get data together
+
+k10b <- k10b %>%
+  dplyr::select(id_mask, CalcK10Score,module_title, test_name) %>%
+  mutate(rc_trial_time=1)
+k10f <- k10f %>%
+  dplyr::select(id_mask, CalcK10Score,module_title, test_name) %>%
+  mutate(rc_trial_time=ifelse(module_title=="Followup Assessments", 10,
+                       ifelse(module_title=="Followup Assessments 2",11,
+                       ifelse(module_title=="Followup Assessments 3",12, NA
+                              ))) )
+k10 <- bind_rows(k10b,k10f)
+k10 <- k10 %>%
+  #rename variable since CalcK10Score is included as covariate in BaselineSample
+  rename(k10=CalcK10Score)
+
+# merge with baseline sample
+
+k10 <- right_join(k10, BaselineSample, by="id_mask")
+
+write.csv(k10,"../Data/k10.csv", row.names = TRUE)
+
+
+```
+
+
+
+
+
+## BMI
+
+Data are in the dataset: 
+
+- mybm_xx_newbody_20230509.csv 
+
+
+Variables are: 
+
+- rcal_mybBMI, cl2_bmi_fu1, cl2_bmi_fu2, cl2_bmi_fu3
+
+
+```{r}
+# BMI
+bmi <- read.csv("../Data/mybm_xx_newbody_20230509.csv",header = TRUE,
+                 fileEncoding = "UTF-8-BOM")
+
+# merge with baseline sample
+bmi <- bmi %>%
+  dplyr::select(id_mask, rcal_mybBMI, cl2_bmi_fu1, cl2_bmi_fu2, cl2_bmi_fu3) %>%
+  right_join(., BaselineSample, by="id_mask")
+
+bmilong <- bmi %>%
+  pivot_longer(cols=c("rcal_mybBMI.x", "cl2_bmi_fu1", 
+                      "cl2_bmi_fu2", "cl2_bmi_fu3")) %>%
+  mutate(rc_trial_time=ifelse(name=="rcal_mybBMI.x",1,
+                       ifelse(name=="cl2_bmi_fu1",10,
+                       ifelse(name=="cl2_bmi_fu2",11,12)))) %>%
+  rename(bmi=value, rcal_mybBMI=rcal_mybBMI.y) 
+
+
+write.csv(bmilong,"../Data/bmilong.csv", row.names = TRUE)
+
+```
+
+## LOGOS
+
+Please create a `total learning score` by summing variables [audio1_wordcount], [audio2_wordcount], [audio3_wordcount] in the baseline dataset then in the follow-up dataset
+Analysis using the newly created total learning score (first 3 trials) and [audio4_wordcount] (delayed trial) – you’ll need to combine baseline dataset with follow-up.
+
+```{r}
+logosb <- read.csv("../Data/mybm_b_logo_20220906_filtered_wip04.csv",header = TRUE,
+                 fileEncoding = "UTF-8-BOM")
+logosf <- read.csv("../Data/mybm_fu_logo_20220906_merged_wip02.csv",header = TRUE,
+                 fileEncoding = "UTF-8-BOM")
+
+logosb <- logosb %>%
+  dplyr::select(id_mask, audio1_wordcount, audio2_wordcount, 
+                         audio3_wordcount, audio4_wordcount, 
+                         module_title)
+logosf <- logosf %>%
+  dplyr::select(id_mask, audio1_wordcount, audio2_wordcount, 
+                         audio3_wordcount, audio4_wordcount,
+                         module_title)
+logos <- bind_rows(logosb,logosf)
+
+# Calculate total learning score
+logos <- logos %>%
+  mutate(total_learning_score=audio1_wordcount+audio2_wordcount+ 
+                         audio3_wordcount) %>%
+  mutate(delayed_trial_logos=audio4_wordcount) %>%
+  mutate(rc_trial_time=ifelse(module_title=="Baseline Assessments",1,
+                       ifelse(module_title=="Followup Assessments",10,
+                       ifelse(module_title=="Followup Assessments 2",11,12))))
+  
+
+logos <- logos %>%
+  right_join(., BaselineSample, by="id_mask") %>%
+  filter(!is.na(rc_trial_time))
+
+
+write.csv(logos,"../Data/logos.csv", row.names = TRUE)
+```

@@ -1,0 +1,266 @@
+---
+title: Maintain your Brain, Secondary K10
+output: html_document
+params:
+  data : "k10"
+  response : "k10"
+  predictors : !r c("rc_trial_time","group_type_id")
+  covariates : !r c("myb_age", "myb_gender","cl_edu_yrs","rcal_modules_sum","adri_baseline")
+  id : "id_mask"
+  final : true
+---
+
+## `r params$response`
+
+- K10 score `CalcK10Score`
+
+These analyses use `bl_adritotal` (as named in the original SPSS file) as the ADRI baseline covariate.
+
+These results exclude those participants who were eligible for fewer than 2 modules but who were randomised. This results in N=6104.
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+options(warnPartialMatchAttr = FALSE, 
+  warnPartialMatchDollar = FALSE,
+  warnPartialMatchArgs = FALSE)
+
+```
+
+
+```{r read-data, message=FALSE, warning=FALSE}
+# read in functions and data
+source("functions.R")
+emm_options(pbkrtest.limit = 1000)
+myb_dat <- read.csv(paste0("../../Data/",params$data,".csv"))
+```
+
+Inference for differences in `r params$predictors[1]`  trend by `r params$predictors[2]` for  `r params$response`
+
+
+
+## Data summary
+
+
+
+```{r outcome-summary, message=!params$final, warning=!params$final}
+myb_dat %>% 
+  group_by(.dots = lapply(params$predictors, as.symbol)) %>% 
+  summarize_at(.vars = params$response, .funs = list(Mean = mean, Sd = sd, N_obs = ~length(.)), na.rm=T)
+```
+
+
+
+```{r fit-models, message=!params$final, warning=!params$final}
+
+# if want to run
+if(!params$final){
+  
+  # run models
+  fitted_mods <- MYB_fit(params$response, params$predictors, 
+                       params$covariates, params$id, myb_dat, times = plannedtimes)
+  # save models
+  save(fitted_mods,file = paste0("../../Results/baseline_sd/",params$response))
+  
+} else {
+  load(file = paste0("../../Results/baseline_sd/",params$response))
+}
+
+
+```
+
+
+
+```{r plot-residuals, message=!params$final, warning=!params$final}
+#plot models
+
+if(!params$final){
+  lapply(fitted_mods, plot, form = cond)
+}
+```
+
+```{r print-summary, message=!params$final, warning=!params$final}
+#check summary is okay
+
+if(!params$final){
+  lapply(fitted_mods, summary)
+}
+```
+
+## Results
+
+```{r inference, message=!params$final, warning=!params$final}
+
+if(!params$final){
+  
+  # calculate CI
+  res_tab = MYB_inf(fitted_mods, params$response)
+  
+  # save models
+  write.csv(res_tab,file = paste0("../../Results/baseline_sd/",params$response,"_table.csv"), row.names = FALSE)
+  
+
+  
+} else {
+  res_tab <- read.csv(file = paste0("../../Results/baseline_sd/",params$response,"_table.csv"))
+  
+  
+}
+
+res <- res_tab %>% 
+  transmute(response,
+            adjusted,
+            base_3yr_did = round(planned,3),
+            LCL = round(asymp.LCL,3),
+            UCL = round(asymp.UCL,3),
+            zstat,
+            pz,
+            Chisq,
+            `p.value` = ifelse (`p.value` < 0.001, "<0.001",paste("= ",round(`p.value`,3)))
+)
+
+res
+
+
+evidence_unadj = ifelse(res_tab$p.value[1]<0.05, "evidence", "no evidence")
+evidence_adj = ifelse(res_tab$p.value[2]<0.05, "evidence", "no evidence")
+
+
+# baseline pooled SD
+temp <- myb_dat %>%
+  filter(rc_trial_time==1) %>%
+  dplyr::select(k10)
+baselinesd<-sd(temp$k10)
+es<-abs(round(res_tab[1,3] / sd(temp$k10),3))
+esadj<-abs(round(res_tab[2,3] / sd(temp$k10),3))
+rm(temp)
+
+```
+
+NOTE: K10 is not baseline-standardised, so these results can be intepreted as:
+
+group_type_id=2 showed a change of 0.323 *fewer* points (unadjusted) on the K10 score than group_type_id=1 from baseline to 3 years.
+
+However, we can calculate an effect size from the raw difference in differences and pooled baseline SD:  
+
+$$ES = \frac{DID}{Baseline SD}$$
+$$ES_{unadj} = \frac{abs(-0.323)}{3.327} = 0.097$$
+
+
+
+
+$$ES_{adj} = \frac{abs(-0.309)}{3.327} = 0.093$$
+
+
+So, the change from baseline to three years was `r es` baseline SDs lower in group 2 than group 1 (unadjusted).
+
+
+```{r, message=!params$final, warning=!params$final}
+
+# calculate all ems by time and group
+group_time_ems <- emmeans(fitted_mods$unadj_mod,  ~ group_type_id + rc_trial_time)
+
+# contrast to baseline by group
+comp_to_baseline <- contrast(group_time_ems, rc_trial_time , "trt.vs.ctrl", by=  "group_type_id")
+
+time_diff <- c(1:3)
+
+to_bl_plot_df <- cbind(summary(comp_to_baseline)[,1:3], 
+                       confint(comp_to_baseline)[,6:7], 
+                       `Visit (Years)` = rep(c(1:3), 2))
+# add baseline 0
+to_bl_plot_df[7:8,] <- NA
+to_bl_plot_df$group_type_id[7:8] = c(1,2)
+to_bl_plot_df$estimate[7:8] = c(0,0)
+to_bl_plot_df$`Visit (Years)`[7:8] = 0
+
+
+to_bl_plot_df %>% 
+  ggplot(aes(`Visit (Years)`, estimate,color=factor(group_type_id), group=factor(group_type_id))) + 
+  geom_point() + 
+  geom_line()+
+  geom_linerange(aes(ymin=asymp.LCL, ymax=asymp.UCL), size=2, alpha=.5) + 
+  theme_classic() + 
+  ylab("Mean change from baseline") +
+  scale_color_discrete(name="Randomisation Group")  + 
+   theme(legend.position = "bottom") 
+
+ggsave(file = paste0(params$response,"_",params$data,"_plot.png"), width = 12, height = 8, units = "cm")
+
+
+
+to_bl_plot_df %>% 
+  transmute(group_type_id, `Visit (Years)`,
+         estimate,
+         LCL = asymp.LCL, UCL = asymp.UCL) %>% 
+  arrange(`Visit (Years)`,group_type_id) %>% 
+write.csv(file = paste0(params$response,"_",params$data,"_plotdata.csv"), row.names = FALSE)
+
+
+```
+
+```{r, include=F, message=F, warning=F}
+emmip(fitted_mods$unadj_mod,  group_type_id ~ rc_trial_time, CIs = TRUE) + 
+  theme_classic() + 
+  ylab(params$response)
+```
+
+
+## Result
+
+Covariates included in adjusted models: 
+
+  - `myb_age`: Age at Baseline 
+  - `myb_gender`: Reported gender
+  - `cl_edu_yrs`: Years of education
+  - `rcal_modules_sum`: Number of modules person was eligible for
+  - `adri_baseline`: ADRI at Baseline
+
+
+A linear mixed model with a random effect for patient and fixed effects of time point, randomisation group and their interaction was run. An additional analysis including covariates of `r paste(params$covariates, collapse=", ")` was run.    We report estimates of the group difference in the change from baseline to three years follow up with 95% confidence interval, and associated Z statistic and p-value.  K10 score is *not* standardised at baseline, so the units are in raw K10 score units.
+
+The unadjusted difference between randomisation groups of change from baseline to three year follow up was `r res$base_3yr_did[1]` ( 95%CI: `r res$LCL[1]`- `r res$UCL[1]`,Z=`r res$zstat[1]`, p`r res$pz[1]`) . 
+
+The difference between randomisation groups of change from baseline to three year follow up was `r res$base_3yr_did[2]` ( 95%CI: `r res$LCL[2]` - `r res$UCL[2]`,Z=`r res$zstat[2]`,p`r res$pz[2]`), adjusting for `r paste(params$covariates, collapse=", ")`.
+
+
+Analysis by Nancy Briggs and Gordana Popovic on `r Sys.Date()`
+
+
+
+```{r , dev = "png", include=F, warning=F, echo=F, message=F}
+
+plot <- 
+  emmip(fitted_mods$unadj_mod,  group_type_id ~ rc_trial_time, CIs = TRUE) + 
+  theme_classic() + 
+  ylab(params$response)
+plotdat<-data.frame(plot$data)
+
+
+plotdat %>% 
+  transmute(group_type_id, rc_trial_time,
+         est = yvar,
+         LCL, UCL) %>% 
+write.csv(file = "domain3_plotdata.csv", row.names = FALSE)
+
+png(file="domain3plot.png", width = 880, height = 680)
+ggplot(plotdat,aes(x=rc_trial_time, y=yvar, group=group_type_id))+
+  geom_point(aes(x=rc_trial_time, y=yvar, color=factor(group_type_id)),
+            position = position_dodge2(width = 0.12)) + 
+  geom_line(aes(x=rc_trial_time, y=yvar, color=factor(group_type_id)), size=1,
+            position = position_dodge2(width = 0.12)) +
+   geom_linerange(aes(ymin=LCL, ymax=UCL,color=factor(group_type_id)), 
+                  position = position_dodge2(width = 0.12), size=2, alpha=.5)+
+  theme_classic() + 
+  xlab("Assessment") + ylab("Learning & Memory") +
+  scale_x_discrete( labels= c( "Baseline", "Year 1", "Year 2", "Year 3")) +
+   scale_color_discrete(name="Randomisation \nGroup") +
+   theme(axis.title = element_text(size = 15), axis.text = element_text(size = 15),
+         legend.text = element_text(size = 15),legend.title = element_text(size = 15)) 
+  
+dev.off()
+
+
+
+
+```

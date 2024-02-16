@@ -1,0 +1,210 @@
+---
+title: Maintain your brain, Primary Cognitive Composite Variable, Imputed
+output: html_document
+params:
+  data : "imputed"
+  response : "cogmeanz_full"
+  predictors : !r c("rc_trial_time","group_type_id")
+  covariates : !r c("myb_age", "myb_gender","cl_edu_yrs","rcal_modules_sum","adri_baseline")
+  id : "id_mask"
+  final : true    
+---
+
+## `r params$response`
+
+- Primary Cognitive Composite Variable
+    - Cogstate Detection
+    - Cogstate Identification
+    - Cogstate One Back
+    - Cambridge Brain Sciences Spatial (tokens) Search
+    - Cambridge Brain Sciences Grammatical Reasoning
+    - Cogstate One Card Learning
+    - Cambridge Brain Sciences Paired Associates
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+
+options(warnPartialMatchAttr = FALSE, 
+  warnPartialMatchDollar = FALSE,
+  warnPartialMatchArgs = FALSE)
+
+```
+
+
+```{r read-data, message=FALSE, warning=FALSE}
+# read in functions and data
+library(tidyverse)
+library(mice)
+library(emmeans)
+library(broom.mixed)
+emm_options(pbkrtest.limit = 1000)
+load( file ="../../MI/imputed_wrangeld_25") # loads imp_mids
+```
+
+Inference for differences in `r params$predictors[1]`  trend by `r params$predictors[2]` for  `r params$response`
+
+Summary of two of the imputed datasets
+
+```{r}
+complete(imp_mids, action = "long", include = TRUE) %>% 
+  filter(.imp %in% 1:2) %>% 
+  group_by(.imp, rc_trial_time, group_type_id) %>% 
+  summarize_at(.vars = params$response, .funs = list(Mean = mean, Sd = sd, N_obs = ~length(.)), na.rm=T)
+```
+
+## Results
+
+```{r inference-unadjusted, message=FALSE, warning=FALSE}
+
+mod_imp <- with(data = imp_mids, exp = lme4::lmer(cogmeanz_full ~  #unadjusted
+                                               rc_trial_time * group_type_id + (1|id_mask)))
+
+mod_imp_0 <- with(data = imp_mids, exp = lme4::lmer(cogmeanz_full ~  #unadjusted
+                                                 rc_trial_time + group_type_id + (1|id_mask)))
+
+aov = anova(mod_imp,mod_imp_0) 
+
+em_imp <- emmeans(mod_imp,  ~ rc_trial_time * group_type_id,  
+                  at = list(rc_trial_time = as.factor(c(1,12)) ))
+cont_imp <- contrast(em_imp, interaction = c("consec", "consec"))
+cond_sum <- summary(cont_imp)
+CI_imp <- confint(cont_imp) 
+  Su <- summary(cont_imp)
+  p_0_4 <- data.frame()
+
+anova_call <- aov$out$`1 ~~ 2`$result %>%  as.data.frame()
+res_tab <- data.frame(response = "cogmeansz_full_imputed",
+                      adjusted = "No",
+                      base_3yr_did = round(cond_sum$estimate, 3), 
+                      LCL = round(CI_imp$asymp.LCL, 3),
+                      UCL = round(CI_imp$asymp.UCL,3),
+                      zstat = round(Su$z.ratio,3),
+                      pz = ifelse (Su$p.value < 0.001, "<0.001",paste("= ",round(Su$p.value,3))),
+                      Fstat = paste0(round(anova_call$F.value,3)," (",
+                                       round(anova_call$df1,0),",",round(anova_call$df2,0), ")"),
+                      p.value = ifelse (anova_call$`P(>F)` < 0.001, "<0.001", paste("= ",round(anova_call$`P(>F)`,3))))
+
+
+
+res_tab
+
+evidence_unadj = ifelse(res_tab$p.value[1]<0.05, "evidence", "no evidence")
+
+```
+
+
+
+
+
+```{r, message=!params$final, warning=!params$final}
+
+# calculate all ems by time and group
+group_time_ems <- emmeans(mod_imp,  ~ group_type_id + rc_trial_time)
+
+# contrast to baseline by group
+comp_to_baseline <- contrast(group_time_ems, rc_trial_time , "trt.vs.ctrl", by=  "group_type_id")
+
+
+to_bl_plot_df <- cbind(summary(comp_to_baseline)[,1:3], 
+                       confint(comp_to_baseline)[,6:7], 
+                       `Visit (Years)` = rep(c(1:3), 2))
+# add baseline 0
+to_bl_plot_df[7:8,] <- NA
+to_bl_plot_df$group_type_id[7:8] = c(1,2)
+to_bl_plot_df$estimate[7:8] = c(0,0)
+to_bl_plot_df$`Visit (Years)`[7:8] = 0
+
+
+to_bl_plot_df %>% 
+  ggplot(aes(`Visit (Years)`, estimate,color=factor(group_type_id), group=factor(group_type_id))) + 
+  geom_point() + 
+  geom_line()+
+  geom_linerange(aes(ymin=asymp.LCL, ymax=asymp.UCL), size=2, alpha=.5) + 
+  theme_classic() + 
+  ylab("Mean change from baseline") +
+  scale_color_discrete(name="Randomisation Group")  + 
+   theme(legend.position = "bottom") 
+
+ggsave(file = paste0(params$response,"_",params$data,"_plot.png"), width = 12, height = 8, units = "cm")
+
+
+
+to_bl_plot_df %>% 
+  transmute(group_type_id, `Visit (Years)`,
+         estimate,
+         LCL = asymp.LCL, UCL = asymp.UCL) %>% 
+  arrange(`Visit (Years)`,group_type_id) %>% 
+write.csv(file = paste0(params$response,"_",params$data,"_plotdata.csv"), row.names = FALSE)
+
+
+```
+
+```
+
+
+
+
+## Result
+
+Data was imputed 25 times for all outcome variables jointly using the variables listed above using the mice package (Buuren et. al) in R. We use a mixed model imputation method with homogeneous variance within clusters (method 2l.pan) to account for repeated measurements. 
+
+Variables  for imputation model:
+
+Analysis model variables
+
+  * group_type_id 
+  * rc_trial_time
+  * group_type_id * rc_trial_time
+
+
+Other variables
+
+  * myb_age
+  * myb_gender
+  * cl_edu_yrs
+  * rcal_modules_sum
+  * adri_baseline
+  * Online modules: rcal_eligibility_bts, rcal_eligibility_pom, rcal_eligibility_pa, rcal_eligibility_diet
+  * rc_race: race
+  * rc_preflang: preferred language
+  * rc_leqses: SES
+  * Various baseline scores and status indicators: 
+    * CalcK10Score
+    * rcal_mybBMI
+    * rcal_total_energy
+    * PREDIMEDTotal,
+    * smoking
+    * everchol
+    * everbp
+    * LLS
+    * CalcAnxietyScore
+    * rc_phq9_total
+    * rc_wellb_status
+    * rc_paqu_status
+    * rc_medh_status
+    * rc_leq_status
+    * rc_diet_status
+    * rc_adri_status
+    * rc_myb1_status
+
+
+
+A linear mixed model with a random effect for individual and fixed effects of time point, randomisation group and their interaction was run.  We report estimates of the group difference in the change from baseline to three years follow up with 95% confidence interval, and associated Z statistic and p-value. The units of the effect size are standard deviations at baseline. 
+
+The unadjusted difference between randomisation groups of change from baseline to three year follow up was `r res_tab$base_3yr_did[1]` ( 95%CI: `r res_tab$LCL[1]`- `r res_tab$UCL[1]`,Z=`r res_tab$zstat[1]`, p`r res_tab$pz[1]`) baseline standard deviations. 
+
+
+Analysis by Nancy Briggs and Gordana Popovic on `r Sys.Date()`
+
+
+
+
+## References
+
+Li, K. H., T. E. Raghunathan, and D. B. Rubin. 1991. Large-Sample Significance Levels from  Multiply Imputed Data Using Moment-Based Statistics and an F Reference Distribution.  Journal of the American Statistical Association, 86(416): 1065–73.
+
+Stef van Buuren, Karin Groothuis-Oudshoorn (2011). mice: Multivariate Imputation by Chained Equations in R.
+Journal of Statistical Software, 45(3), 1-67. URL https://www.jstatsoft.org/v45/i03/.
+

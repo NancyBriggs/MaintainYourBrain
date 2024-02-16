@@ -1,0 +1,289 @@
+---
+title: "Creating some data for writing MI programs"
+author: "Nancy Briggs"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+
+
+library(tidyverse)
+library(kableExtra)
+```
+
+Updated "`r Sys.Date()`"
+
+
+Nov 11, 2022 update
+
+
+  - As per email, Nov 5, 2022 from Henry Brodaty:
+    - ADRI at baseline (`adri_baseline` for the covariates) should now be based on `adritotal` (`bl_adritotal` in the original SPSS file)
+    - Removed completely from the datasets the participants eligible for <=1 module
+      - this results in N=6104.
+
+Previous Updates:
+
+- As per email from Megan, ADRI variable is `sum_newadri_bl`. If this variable is missing, then `adti_total` is used
+- new variable to use as covariate is called `adri_baseline`
+
+
+
+Getting some data with the individual test items for writing MI program code.
+
+This includes the following changes to the raw data:  
+
+- Reversing coding reaction time tests: Detection (test_id==5), Identification (test_id==6),
+One Back (test_id==7)
+
+
+## Importing data
+
+All datasets were exported to CSV format from SPSS.  The CSV files are imported into R.
+
+```{r dataimport}
+
+# Status Index data
+st.index <- read.csv("../Data/mybm_status_index_20220422.csv",header = TRUE,
+                 fileEncoding = "UTF-8-BOM")
+
+# Demographics data
+demo <- read.csv("../Data/mybm_b_demos_v3.1_20181018.csv",header = TRUE,
+                 fileEncoding = "UTF-8-BOM")
+
+# Group Allocation
+group <- read.csv("../Data/mybm_b_group_v1.0_20181018.csv",header = TRUE,
+                 fileEncoding = "UTF-8-BOM")
+
+# Trial Activities
+st.trial <- read.csv("../Data/mybm_status_trial_20220422.csv",header = TRUE,
+                 fileEncoding = "UTF-8-BOM")
+
+# Cognition Outcomes
+cogout <- read.csv("../Data/mybm_full_cogout_20220422.csv",header = TRUE,
+                 fileEncoding = "UTF-8-BOM")
+
+
+# adritotal and some potential imputation predictors
+adri <- read.csv("../Data/tempmh_mybm_missing_20220617.csv",header = TRUE,
+                 fileEncoding = "UTF-8-BOM")
+```
+
+
+## Relevant variables for merging and analysis
+
+
+- st.index
+  - randomisation_status
+  - id_mask
+  - myb_trial_status
+  - rcal_modules_sum
+- st.trial
+  - activity_title
+  - module_title
+  - rc_title
+  - tpa_status
+- cogout
+  - activity_title
+  - resultPrimaryOutcome
+  - test_name
+  - test_id
+- demo
+  - myb_age
+  - myb_gender
+  - cl_edu_yrs
+- adri
+  - adritotal
+  - sum_newadri_bl
+  
+  
+## Merging process
+
+- Create `BaselineSample` dataset:
+  - `st.index`: select rc_randomisation_status==1
+    - Keep relevant variables: id_mask, rc_randomisation_status, myb_trial_status, rcal_modules_sum
+  - Merge with `demo`
+    - Keep relevant variables: myb_age, myb_gender, cl_edu_yrs
+  - Merge with `group`
+    - Keep relevant variables: group_type_id
+  - merge with `adri`
+    - Keep relevant variables: adritotal, sum_newadri_bl (for analysis covariates)
+    - Keep variables for potential inclusion in imputation model: CalcK10SCore, rcal_mybBMI, rcal_total_energy, PREDIMEDTotal, smoking, everchol, everbp, LLS, CalcAnxietyScore, rc_phq9_total, rc_wellb_status, rc_paqu_status, rc_medh_status, rc_leq_status, rc_diet_status, rc_adri_status, rc_myb1_status
+
+- Create `cogprimary` dataset:
+  - Merge `BaselineSample` with  `st.trial`
+    - Keep relevant variables: rc_trial_time, myb_trial_status, activity_title, module_title, rc_title, tpa_status
+    - Keep observations (test scores) tpa_status=="Completed"
+  - Merge with `cogout` (key variables are id_mask, module_title(st.trial)/ module_name(cogout), activity_title(st.trial)/activity_name(cogout) )
+    - Keep relevant variables: test_name,test_id, resultPrimaryOutcome
+  
+  
+  
+
+```{r}
+
+BaselineSample <- st.index %>%
+  filter(rc_randomisation_status==1) %>%
+  dplyr::select(id_mask,rc_randomisation_status,myb_trial_status, rcal_modules_sum)  %>%  
+  left_join(., group, by="id_mask") %>%
+  relocate(group_type_id, .after=id_mask) %>%
+  left_join(.,demo, by="id_mask") %>%
+  dplyr::select(id_mask,rc_randomisation_status, myb_trial_status,
+                rcal_modules_sum, group_type_id, myb_age, myb_gender,
+                cl_edu_yrs) %>%
+  left_join(., select(adri, -c(rc_randomisation_status)), by="id_mask") %>%
+  mutate(adri_baseline=adritotal) %>%
+  dplyr::select(id_mask,rc_randomisation_status, myb_trial_status,
+                rcal_modules_sum, group_type_id, myb_age, myb_gender,
+                cl_edu_yrs, adritotal, sum_newadri_bl, adri_baseline, CalcK10Score, 
+                rcal_mybBMI, rcal_total_energy, PREDIMEDTotal,
+                smoking, everchol, everbp, LLS, CalcAnxietyScore, rc_phq9_total, rc_wellb_status,
+                rc_paqu_status, rc_medh_status, rc_leq_status, rc_diet_status, rc_adri_status,
+                rc_myb1_status) 
+
+
+
+
+# Select subset of people
+BaselineSample_randsample <- BaselineSample %>%
+  sample_frac(.2) %>%
+  dplyr::select(id_mask)
+
+
+
+# Full dataset for imputation
+cogprimary <- BaselineSample %>%
+  left_join(., st.trial, by=c("id_mask","rc_randomisation_status")) %>%
+  dplyr::select(id_mask,rc_randomisation_status,rc_trial_time, myb_trial_status, 
+                rcal_modules_sum, activity_title,module_title,rc_title,tpa_status, group_type_id, myb_age, myb_gender,
+                cl_edu_yrs, adritotal, sum_newadri_bl, adri_baseline, CalcK10Score, 
+                rcal_mybBMI, rcal_total_energy, PREDIMEDTotal,
+                smoking, everchol, everbp, LLS, CalcAnxietyScore, rc_phq9_total, rc_wellb_status,
+                rc_paqu_status, rc_medh_status, rc_leq_status, rc_diet_status, rc_adri_status,
+                rc_myb1_status) %>%
+  filter(tpa_status=="Completed") %>%
+  left_join(.,cogout, by=c("id_mask","rc_randomisation_status", "module_title"="module_name",
+                           "activity_title"="activity_name" ) ) %>%
+  filter(activity_title=="Cognitive Assessment (Thinking)" | 
+        activity_title=="Cognitive Assessment (Cards)") %>%
+  dplyr::select(id_mask,rc_randomisation_status,rc_trial_time, myb_trial_status,
+                rcal_modules_sum,
+                activity_title,module_title,rc_title,tpa_status, test_name,test_id,
+                resultPrimaryOutcome, group_type_id, myb_age, myb_gender,
+                cl_edu_yrs, adritotal, sum_newadri_bl, adri_baseline, CalcK10Score, 
+                rcal_mybBMI, rcal_total_energy, PREDIMEDTotal,
+                smoking, everchol, everbp, LLS, CalcAnxietyScore, rc_phq9_total, rc_wellb_status,
+                rc_paqu_status, rc_medh_status, rc_leq_status, rc_diet_status, rc_adri_status,
+                rc_myb1_status) 
+          # DO NOT NEED for IMPUTATION
+          # %>%
+          # mutate(ed_group=ifelse(cl_edu_yrs<12,0,1)) # For the zscore calculation
+
+
+MI_testing <- cogprimary %>%
+  
+  # reverse coding Detection, Identification, One Back
+  mutate(resultPrimaryOutcome=ifelse(test_id %in% c(5,6,7), 
+                                     (-1 * resultPrimaryOutcome), 
+                                     resultPrimaryOutcome)) %>%
+
+
+       # create domain category variable
+       mutate(domain=ifelse(test_id %in% c(5,6), 1,
+                     ifelse(test_id %in% c(7, 21,24), 2,
+                     ifelse(test_id %in% c(8,23), 3, 0))) )  %>%
+      
+        # Must make sure that each person at each timepoint has at least 2 scores
+        # First, count valid scores at each time for each person within each domain
+        # count number of valid test scores for each domain within each person
+        # group_by(id_mask, rc_trial_time, domain) %>%
+        # mutate(n_tests=n())  %>%
+        # group_by(rc_trial_time, test_id) %>%
+        # filter out people with only 1 score for a domain
+        # if you want to know how many are filtered out, you can create a new dataset here.
+        #filter(n_tests>=2) %>%
+
+  filter(rc_trial_time %in% c(1,10,11,12) ) 
+```
+
+
+Variables to use for imputation model:
+
+Analysis model variables
+
+  * group_type_id 
+  * rc_trial_time
+  * group_type_id * rc_trial_time
+  * myb_age
+  * myb_gender
+  * cl_edu_yrs
+  * rcal_modules_sum
+  * adri_baseline
+
+Extra variables for code testing
+
+  * Online modules: rcal_eligibility_bts, rcal_eligibility_pom, rcal_eligibility_pa, rcal_eligibility_diet
+      * These are binary yes/ no variables
+  * rc_race: race
+  * rc_preflang: preferred language
+  * rc_leqses: SES
+  * Various baseline scores and status indicators: 
+    * CalcK10Score
+    * rcal_mybBMI
+    * rcal_total_energy
+    * PREDIMEDTotal,
+    * smoking
+    * everchol
+    * everbp
+    * LLS
+    * CalcAnxietyScore
+    * rc_phq9_total
+    * rc_wellb_status
+    * rc_paqu_status
+    * rc_medh_status
+    * rc_leq_status
+    * rc_diet_status
+    * rc_adri_status
+    * rc_myb1_status
+
+
+```{r imputionvars}
+
+## add in some more  variables for imputation  model
+
+# Module elgibility & Demographics
+MI_vars <- st.index %>%
+  filter(rc_randomisation_status==1) %>%
+  dplyr::select(id_mask,rcal_eligibility_bts, rcal_eligibility_pom, rcal_eligibility_pa,
+                rcal_eligibility_diet)  %>%
+  left_join(., demo, by="id_mask") %>%
+  select(id_mask,rcal_eligibility_bts, rcal_eligibility_pom, rcal_eligibility_pa,
+                rcal_eligibility_diet, rc_race, rc_preflang, rc_leqses )
+
+
+
+MI_testing <- MI_testing %>%
+  left_join(., MI_vars, by="id_mask")
+
+```
+
+
+  
+
+```{r}
+write.csv(MI_testing,"../MI/MI_testing_fullSample.csv", row.names = TRUE)
+```
+
+Now, use the 20% random Baseline sample for testing.
+
+
+```{r}
+
+MI_testing_randSample <- MI_testing %>%
+  right_join(., BaselineSample_randsample, by="id_mask")
+
+write.csv(MI_testing_randSample,"../MI/MI_testing_randSample.csv", row.names = TRUE)
+```

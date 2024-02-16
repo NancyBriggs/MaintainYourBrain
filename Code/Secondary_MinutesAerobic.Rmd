@@ -1,0 +1,339 @@
+---
+title: Maintain your brain, Minutes Aerobic Exercise
+output: html_document
+params:
+  data : "pa"
+  response : "ncal_msaerobic_wk"
+  predictors : !r c("rc_trial_time","group_type_id")
+  covariates : !r c("myb_age", "myb_gender","cl_edu_yrs","rcal_modules_sum","adri_baseline")
+  id : "id_mask"
+  final : false
+---
+
+## `r params$response`
+
+- Secondary Outcome: Minutes Aerobic Exercise
+
+These analyses use `bl_adritotal` (as named in the original SPSS file) as the ADRI baseline covariate.
+
+These results exclude those participants who were eligible for fewer than 2 modules but who were randomised. This results in N=6104.
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(warnPartialMatchAttr = FALSE, 
+  warnPartialMatchDollar = FALSE,
+  warnPartialMatchArgs = FALSE)
+
+
+```
+
+
+```{r read-data, message=FALSE, warning=FALSE}
+# read in functions and data
+source("functions.R")
+myb_dat <- read.csv(paste0("../../Data/",params$data,".csv"))  %>%
+    mutate(rc_trial_time= as.factor(rc_trial_time))
+
+library(glmmTMB)
+library(DHARMa)
+
+```
+
+Inference for differences in `r params$predictors[1]`  trend by `r params$predictors[2]` for  `r params$response`
+
+## Data summary
+
+A 5-number summary is presented for the values here as the data are highly skewed.
+
+```{r outcome-summary, message=!params$final, warning=!params$final}
+
+p <- c(0, 0.25, 0.5, 0.75, 1.00)
+p_names <- map_chr(p, ~paste0(.x*100))
+p_funs <- map(p, ~partial(quantile, probs = .x, na.rm = TRUE)) %>% 
+  set_names(nm = p_names)
+
+# Percentiles
+myb_dat %>%
+  group_by(rc_trial_time, group_type_id) %>%
+  summarize_at(vars(params$response), funs(!!!p_funs)) 
+
+# Means
+myb_dat %>% 
+  group_by(.dots = lapply(params$predictors, as.symbol)) %>% 
+  summarize_at(.vars = params$response, .funs = list(Mean = mean, Sd = sd, N_obs = ~length(.)), na.rm=T)
+
+```
+
+### Histograms
+
+```{r,hist, message=!params$final, warning=!params$final }
+
+
+myb_dat %>% ggplot(aes(x=ncal_msaerobic_wk)) + geom_histogram() +
+  facet_grid(group_type_id~rc_trial_time) + theme_classic() 
+
+
+
+```
+
+```{r fit-models, message=!params$final, warning=!params$final}
+
+# if want to run
+if(!params$final){
+  # if(FALSE){
+  # run models
+
+  
+  unadj_mod <- glmmTMB(ncal_msaerobic_wk ~   rc_trial_time*group_type_id + (1 | id_mask) , 
+                       data=myb_dat, family = tweedie )
+  unadj_null <- glmmTMB(ncal_msaerobic_wk ~ rc_trial_time + group_type_id + (1 | id_mask) ,
+                        data=myb_dat, family = tweedie )
+  adj_mod <- glmmTMB(ncal_msaerobic_wk ~ myb_age + myb_gender + cl_edu_yrs + rcal_modules_sum +  
+                       adri_baseline + rc_trial_time * group_type_id + (1 | id_mask) ,
+                     data=myb_dat, family = tweedie )
+  adj_null <- glmmTMB(ncal_msaerobic_wk ~ myb_age + myb_gender + cl_edu_yrs + rcal_modules_sum +  
+                        adri_baseline + rc_trial_time + group_type_id + (1 | id_mask) , 
+                      data=myb_dat, family = tweedie )
+  
+  # save models
+  save(unadj_mod,file = paste0("../../Results/baseline_sd/",params$response,"_unadj_mod"))
+  save(unadj_null,file = paste0("../../Results/baseline_sd/",params$response,"_unadj_null"))
+  save(adj_mod,file = paste0("../../Results/baseline_sd/",params$response,"_adj_mod"))
+  save(adj_null,file = paste0("../../Results/baseline_sd/",params$response,"_adj_null"))
+  
+} else {
+  load(file = paste0("../../Results/baseline_sd/",params$response,"_unadj_mod"))
+  load(file = paste0("../../Results/baseline_sd/",params$response,"_unadj_null"))
+  load(file = paste0("../../Results/baseline_sd/",params$response,"_adj_mod"))
+  load(file = paste0("../../Results/baseline_sd/",params$response,"_adj_null"))
+  }
+
+fitted_mods = list(adj_mod = adj_mod,
+              unadj_null = unadj_null,
+              unadj_mod = unadj_mod,
+              adj_null = adj_null)
+
+```
+
+
+
+```{r plot-residuals, message=!params$final, warning=!params$final}
+#plot models
+
+
+if(!params$final){
+  # if(FALSE){
+  # lapply(fitted_mods, plot, form = cond)
+
+  # sim= simulateResiduals(unadj_mod, n = 5000)
+  # resid = residuals(sim, quantileFunction = qnorm, outlierValues = c(-7,7))
+  # scatter.smooth(resid~predict(unadj_mod, re.form = NA,type="response"),
+  #                lpars =list(col = "red", lwd = 3, lty = 3))  
+  # 
+  # sim= simulateResiduals(adj_mod, n = 5000)
+  # resid = residuals(sim, quantileFunction = qnorm, outlierValues = c(-7,7))
+  # scatter.smooth(resid~predict(adj_mod, re.form = NA,type="response"),
+  #                lpars =list(col = "red", lwd = 3, lty = 3))
+  # 
+  # sim= simulateResiduals(unadj_null, n = 5000)
+  # resid = residuals(sim, quantileFunction = qnorm, outlierValues = c(-7,7))
+  # scatter.smooth(resid~predict(unadj_null, re.form = NA,type="response"),
+  #                lpars =list(col = "red", lwd = 3, lty = 3))
+  # 
+  # sim= simulateResiduals(adj_null, n = 5000)
+  # resid = residuals(sim, quantileFunction = qnorm, outlierValues = c(-7,7))
+  # scatter.smooth(resid~predict(adj_null, re.form = NA,type="response"),
+  #                lpars =list(col = "red", lwd = 3, lty = 3))  
+
+ 
+  }
+```
+
+```{r print-summary, message=!params$final, warning=!params$final}
+#check summary is okay
+
+if(!params$final){
+  summary(unadj_null)
+  summary(unadj_mod)
+  summary(adj_null)
+  summary(adj_mod)
+}
+```
+
+## Results
+
+```{r inference, message=!params$final, warning=!params$final}
+
+
+if(!params$final){
+  
+  
+  #unadjusted
+  anova_call <- anova(unadj_null,unadj_mod)
+  likrat <-  data.frame(Chisq = paste0(round(anova_call$Chisq[2],3),"(",
+                                       anova_call$Df[2],")"),
+                        pvalue = anova_call$`Pr(>Chisq)`[2])
+  em <- emmeans(unadj_mod,  ~ rc_trial_time*group_type_id , type = "response",  
+                at = list(rc_trial_time = plannedtimes) )
+  cont <- contrast(em, interaction = c("consec", "consec")) 
+  CI <- confint(cont) 
+  Su <- summary(cont)
+  coef <- as.data.frame(cont)$ratio
+  confint <- CI[,c("asymp.LCL", "asymp.UCL")]
+  
+  
+  zstat = round(Su$z.ratio,3)
+  pz = ifelse (Su$p.value < 0.001, "<0.001",paste("= ",round(Su$p.value,3)))
+  unadj_res = cbind(coef = coef, confint, zstat = zstat, pz = pz, likrat)
+  
+  #adjusted
+  
+  anova_call <- anova(adj_null,adj_mod)
+  likrat <-  data.frame(Chisq = paste0(round(anova_call$Chisq[2],3),"(",
+                                       anova_call$Df[2],")"),
+                        pvalue = anova_call$`Pr(>Chisq)`[2])
+  em <- emmeans(adj_mod,  ~ rc_trial_time*group_type_id , type = "response",  
+                at = list(rc_trial_time = plannedtimes) )
+  cont <- contrast(em, interaction = c("consec", "consec"))
+  CI <- confint(cont) 
+  Su <- summary(cont)
+  coef <- as.data.frame(cont)$ratio
+  confint <- CI[,c("asymp.LCL", "asymp.UCL")]
+  
+  
+  zstat = round(Su$z.ratio,3)
+  pz = ifelse (Su$p.value < 0.001, "<0.001",paste("= ",round(Su$p.value,3)))
+  adj_res = cbind(coef = coef, confint, zstat = zstat, pz = pz, likrat)
+  
+  
+  # calculate CI
+  res_tab <- rbind(adj_res,unadj_res) %>% 
+    as.data.frame() %>% 
+    remove_rownames %>% 
+    mutate(response = params$response,
+           adjusted = c("No","Yes")) %>% 
+    transmute(response, adjusted,
+              planned = coef, asymp.LCL = asymp.LCL, asymp.UCL = asymp.UCL, 
+              Chisq, p.value = pvalue)
+  
+  
+  
+  # save models
+  write.csv(res_tab,file = paste0("../../Results/baseline_sd/",params$response,"_table.csv"), row.names = FALSE)
+  
+
+  
+} else {
+  res_tab <- read.csv(file = paste0("../../Results/baseline_sd/",params$response,"_table.csv"))
+  
+  
+}
+
+res <- res_tab %>% 
+  transmute(response,
+            adjusted,
+            base_3yr_ratio = round(planned,3),
+            LCL = round(asymp.LCL,3),
+            UCL = round(asymp.UCL,3),
+            zstat,
+            pz,
+            Chisq,
+            `p.value` = ifelse (`p.value` < 0.001, "<0.001",paste("= ",round(`p.value`,3)))
+)
+
+res
+
+
+evidence_unadj = ifelse(res_tab$p.value[1]<0.05, "evidence", "no evidence")
+evidence_adj = ifelse(res_tab$p.value[2]<0.05, "evidence", "no evidence")
+
+
+
+
+```
+
+```{r, echo=!params$final, message=!params$final, warning=!params$final}
+
+# calculate all ems by time and group
+group_time_ems <- emmeans(fitted_mods$unadj_mod,  ~ group_type_id  + rc_trial_time, type = "response")
+
+# contrast to baseline by group
+comp_to_baseline <- contrast(group_time_ems, rc_trial_time , "trt.vs.ctrl", by=  "group_type_id")
+
+time_diff <- c(1:3)
+
+to_bl_plot_df <- cbind(summary(comp_to_baseline)[,1:3], 
+                       confint(comp_to_baseline)[,6:7], 
+                       `Visit (Years)` = rep(c(1:3), 2))
+# add baseline 0
+to_bl_plot_df[7:8,] <- NA
+to_bl_plot_df$group_type_id[7:8] = c(1,2)
+to_bl_plot_df$ratio[7:8] = c(1,1)
+to_bl_plot_df$`Visit (Years)`[7:8] = 0
+
+
+to_bl_plot_df %>% 
+  ggplot(aes(`Visit (Years)`, ratio, color=factor(group_type_id), group=factor(group_type_id))) + 
+  geom_point() + 
+  geom_line()+
+  geom_linerange(aes(ymin=asymp.LCL, ymax=asymp.UCL), size=2, alpha=.5) + 
+  theme_classic() + 
+  ylab("Relative change from baseline") +
+  scale_color_discrete(name="Randomisation Group")  + 
+   theme(legend.position = "bottom") 
+
+ggsave(file = paste0(params$response,"_",params$data,"_plot.png"), width = 12, height = 8, units = "cm")
+
+
+
+to_bl_plot_df %>% 
+  transmute(group_type_id, `Visit (Years)`,
+         ratio,
+         LCL = asymp.LCL, UCL = asymp.UCL) %>% 
+  arrange(`Visit (Years)`,group_type_id) %>% 
+write.csv(file = paste0(params$response,"_",params$data,"_plotdata.csv"), row.names = FALSE)
+
+
+
+ratios_adj <- emmeans(fitted_mods$adj_mod, trt.vs.ctrl ~ group_type_id  + rc_trial_time, type = "response", by=  "group_type_id", adjust = NULL) $contrasts[c(3,6)] %>% confint()
+
+ratios_adj[,3:7] <- round(ratios_adj[,3:7],2)
+
+ratios_unadj <- emmeans(fitted_mods$unadj_mod, trt.vs.ctrl ~ group_type_id  + rc_trial_time, type = "response", by=  "group_type_id", adjust = NULL) $contrasts[c(3,6)] %>% confint() 
+
+ratios_unadj[,3:7] <- round(ratios_unadj[,3:7],2)
+
+
+```
+
+
+## Result
+
+
+These data are positively skewed and bounded by 0. As such, a normal disitrubution is not recommended. We tried a number of GLMMs with capacity to handle such distributions, and concluded a tweedie distribution was most appropriate for these data.
+
+. 
+Covariates included in adjusted models: 
+
+  - `myb_age`: Age at Baseline 
+  - `myb_gender`: Reported gender
+  - `cl_edu_yrs`: Years of education
+  - `rcal_modules_sum`: Number of modules person was eligible for
+  - `adri_baseline`: ADRI at Baseline
+
+
+A tweedie mixed model with a random effect for individual and fixed effects of time point, randomisation group and their interaction was run. An additional analysis including covariates of `r paste(params$covariates, collapse=", ")` was run.  We report estimate and confidence interval for the relative change in minutes per week within each group, with assoicated z statistic and p-value. 
+
+For group = 1, the unadjusted estimated relative change is `r ratios_unadj$ratio[1]` from baseline to 3 years (95%CI `r ratios_unadj$asymp.LCL[1]` - `r ratios_unadj$asymp.UCL[1]`), for group 2, the estimated relative change is `r ratios_unadj$ratio[2]` from baseline to 3 years (95%CI `r ratios_unadj$asymp.LCL[2]` - `r ratios_unadj$asymp.UCL[2]`). The unadjusted ratio between randomisation groups of relative change from baseline to three year follow up was `r res$base_3yr_ratio[1]` ( 95%CI: `r res$LCL[1]`- `r res$UCL[1]`, Z=`r res$zstat[1]`,p`r res$pz[1]` ). 
+
+
+
+For group = 1, the adjusted estimated relative change is `r ratios_adj$ratio[1]` from baseline to 3 years (95%CI `r ratios_adj$asymp.LCL[1]` - `r ratios_adj$asymp.UCL[1]`), for group 2, the estimated relative change is `r ratios_adj$ratio[2]` from baseline to 3 years (95%CI `r ratios_adj$asymp.LCL[2]` - `r ratios_adj$asymp.UCL[2]`). The unadjusted ratio between randomisation groups of relative change from baseline to three year follow up was `r res$base_3yr_ratio[2]` ( 95%CI: `r res$LCL[2]`- `r res$UCL[2]`Z=`r res$zstat[2]`,p`r res$pz[2]` ).   
+
+
+
+Analysis by Nancy Briggs and Gordana Popovic on `r Sys.Date()`
+
+

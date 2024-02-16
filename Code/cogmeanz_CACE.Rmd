@@ -1,0 +1,215 @@
+---
+title: Maintain your brain, Primary Cognitive Composite Variable
+subtitle: CACE analysis
+output: html_document
+params:
+  data : "engagement"
+  response : "cogmeanz_full"
+  predictors : !r c("rc_trial_time","group_type_id")
+  covariates : !r c("myb_age", "myb_gender","cl_edu_yrs","rcal_modules_sum","adri_baseline")
+  id : "id_mask"
+  final : true
+---
+
+## `r params$response`
+
+- Primary Cognitive Composite Variable
+    - Cogstate Detection
+    - Cogstate Identification
+    - Cogstate One Back
+    - Cambridge Brain Sciences Spatial (tokens) Search
+    - Cambridge Brain Sciences Grammatical Reasoning
+    - Cogstate One Card Learning
+    - Cambridge Brain Sciences Paired Associates
+
+These analyses use `bl_adritotal` (as named in the original SPSS file) as the ADRI baseline covariate.
+
+These results exclude those participants who were eligible for fewer than 2 modules but who were randomised. This results in N=6104.
+
+This is the analysis for the complier-averaged causal effect.  In this analysis, randomisation group is used as an instrumental variable.
+
+- Define "complience", which can be thought of as whether the treatment was received (and done by the participant). 
+  - In the intervention group, we will define this as completing at least 60% of content for all eligible modules.
+  - In the control group, they are all assume to have 0 treatment received no treatment (`tx_received`=0)
+  
+- Two stage process:
+  - Regress `tx_received` on randomisation group and save probabilities.
+  - Predict outcome from probabilities
+  - Estimate the effect (this is the CACE estimate)
+  - Bootstrap CIs 
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+```
+
+
+```{r read-data, message=FALSE, warning=FALSE}
+# read in functions and data
+source("functions.R")
+
+myb_dat <- read.csv(paste0("../../Data/",params$data,".csv"))
+
+```
+
+Inference for differences in `r params$predictors[1]`  trend by `r params$predictors[2]` for  `r params$response`
+
+## Data summary
+
+
+```{r outcome-summary, message=!params$final, warning=!params$final}
+myb_dat %>% 
+  group_by(.dots = lapply(params$predictors, as.symbol)) %>% 
+  summarize_at(.vars = params$response, .funs = list(Mean = mean, Sd = sd, N_obs = ~length(.)), na.rm=T)
+```
+
+## Defining Compliance groups
+
+```{r}
+
+# myb_dat <- myb_dat %>%
+#   mutate(tx_received = case_when(
+#     group_type_id == 1 ~ 0,
+#     group_type_id == 2 ~ overall_engagement_bin,
+#   ))
+
+myb_dat <- myb_dat %>%
+  mutate(tx_received = ifelse(group_type_id == 1, 0, overall_engagement_bin))
+   
+```
+
+# Predict compliance from group (for baseline only)
+
+```{r}
+b <- myb_dat %>%
+  filter(rc_trial_time==1)
+
+# control group should have mean, min and max of 0,
+# int group should have mean>0 and variability
+b %>% 
+  group_by(group_type_id) %>% 
+  summarize(Mean = mean(tx_received),
+            SD=sd(tx_received),
+            Min=min(tx_received),
+            Max=max(tx_received))
+
+
+compliance <- glm(tx_received ~ group_type_id, data=b, family = binomial)
+# get predicted values
+b$pred_compliance <- predict(compliance, type = "response")
+# get participant IDs
+  b <- b %>%
+    dplyr::select(pred_compliance,id_mask)
+  # merge back with full
+myb_dat_wc <- myb_dat %>%
+  left_join(b, by="id_mask")
+```
+
+
+```{r}
+
+# CACE estimate
+# run the model, using time*predicted compliance as the interaction.
+# should the emmeans be calculated at 0 and 1 (engagement score) or 
+# 0 and 2?
+# in looking at the 0/1 estimates, I think this is correct.
+
+
+unadj_mod <- lmer(cogmeanz_full ~ factor(rc_trial_time)*pred_compliance + 
+                                  (1|id_mask), data=myb_dat_wc)
+# summary(unadj_mod)
+emm<- emmeans(unadj_mod, ~rc_trial_time*pred_compliance,
+        at = list(pred_compliance=c(0,1)) )
+
+did<-contrast(emm, list(contr = c(1,0,0,-1,-1,0,0,1)))
+confint(did)$estimate
+
+plot(unadj_mod)
+
+
+```
+
+## Bootstrap
+
+https://stackoverflow.com/questions/11919808/block-bootstrap-from-subject-list
+
+```{r}
+
+library(boot)
+# myfit <- function(x, i) {
+#   mydata <- do.call("rbind", lapply(i, function(n) subset(myb_dat, id_mask==x[n])))
+#   b <- mydata %>%
+#     filter(rc_trial_time==1)
+# 
+# compliance <- glm(tx_received ~ group_type_id, data=b, family = binomial)
+# 
+# # get predicted values
+#   b$pred_compliance <- predict(compliance, type = "response")
+# # get participant IDs
+#   b <- b %>%
+#     dplyr::select(pred_compliance,id_mask)
+#   # merge back with full
+# mydata <- mydata %>%
+#   left_join(b, by="id_mask")
+# 
+# 
+# unadj_mod <- lmer(cogmeanz_full ~ factor(rc_trial_time)*pred_compliance +
+#                                   (1|id_mask), data=mydata)
+# emm<- emmeans(unadj_mod, ~rc_trial_time*pred_compliance,
+#         at = list(pred_compliance=c(0,1)) )
+# 
+# did<-contrast(emm, list(contr = c(1,0,0,-1,-1,0,0,1)))
+# summary(did)$estimate
+# 
+# }
+# 
+# id_masks <- unique(myb_dat$id_mask)
+# 
+# start_time <- Sys.time()
+# b1 <- boot(id_masks, myfit, 999)
+# Sys.time() - start_time
+# 
+# save(b1, file = "CACE_boot_cat")
+load("CACE_boot_cat")
+
+
+
+CI <- boot.ci(b1, type = "perc")
+pval <- mean(c(confint(did)$estimate,b1$t)<0)
+res <-  data.frame(response = params$response,
+            adjusted = "No",
+            base_3yr_did = round(confint(did)$estimate,3),
+            LCL = round(CI$percent[4],3),
+            UCL = round(CI$percent[5],3),
+            `p.value` = ifelse (pval < 0.001, "<0.001",paste("= ",round(pval,3)))
+)
+
+res
+
+write.csv(res,file = paste0("../../Results/baseline_sd/",params$response,"_CACE_engagement_.csv"), row.names = FALSE)
+
+
+evidence_unadj = ifelse(res$p.value[1]<0.05, "evidence", "no evidence")
+
+```
+
+
+
+
+## Result
+
+We classified someone as "engaged" if they competed at least 60% of units within every module for which they were eligible. 
+
+The association of the engagement on outcomes was analysed using a complier average causal effect (CACE) analysis with randomisation group as instrumental variable (Dunn 2005) using a two-step approach with block bootstrap percentile confidence intervals. The first step predicts engagement from randomisation group with a logistic regression. The second step is a linear mixed model with with time, predicted engagement score and their interaction as predictors. 
+
+The unadjusted difference in difference value from baseline to three year follow up was `r res$base_3yr_did[1]` ( 95%CI: `r res$LCL[1]`- `r res$UCL[1]`, p`r res$p.value[1]`) baseline standard deviations. 
+
+
+
+
+Analysis by Nancy Briggs and Gordana Popovic on `r Sys.Date()`
+
+## Reference
+
+Dunn G, Maracy M, Tomenson B. Estimating treatment effects from randomized clinical trials with noncompliance and loss to follow-up: the role of instrumental variable methods. Stat Methods Med Res. 2005 Aug;14(4):369-95. doi: 10.1191/0962280205sm403oa. PMID: 16178138.

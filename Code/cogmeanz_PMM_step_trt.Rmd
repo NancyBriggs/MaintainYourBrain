@@ -1,0 +1,354 @@
+---
+title: Maintain your brain, Primary Cognitive Composite Variable
+subtitle: Pattern Mixture Model  Scenario 2
+output: html_document
+params:
+  data : "imputed"
+  response : "cogmeanz_full"
+  predictors : !r c("rc_trial_time","group_type_id")
+  covariates : !r c("myb_age", "myb_gender","cl_edu_yrs","rcal_modules_sum","adri_baseline")
+  id : "id_mask"
+  mnar_coeff : .1
+  final : false    
+---
+
+## `r params$response`
+
+- Primary Cognitive Composite Variable
+    - Cogstate Detection
+    - Cogstate Identification
+    - Cogstate One Back
+    - Cambridge Brain Sciences Spatial (tokens) Search
+    - Cambridge Brain Sciences Grammatical Reasoning
+    - Cogstate One Card Learning
+    - Cambridge Brain Sciences Paired Associates
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+
+options(warnPartialMatchAttr = FALSE, 
+  warnPartialMatchDollar = FALSE,
+  warnPartialMatchArgs = FALSE) 
+ 
+```
+
+
+```{r read-data, message=FALSE, warning=FALSE}
+# read in functions and data
+library(tidyverse)
+library(mice)
+library(emmeans)
+library(broom.mixed)
+emm_options(pbkrtest.limit = 1000)
+load( file ="../../MI/imputed_wrangeld_25") # loads imp_mids
+```
+
+PMM methods for MNAR assumption.  
+
+Inference for differences in `r params$predictors[1]`  trend by `r params$predictors[2]` for  `r params$response`
+
+
+```{r, echo=F, message=F, warning=F}
+# https://bookdown.org/glorya_hu/MNAR-Guide/introducing-four-missing-data-scenarios.html
+
+
+# from original data, get id_mask, rc_trial_time, cogmeanz,
+# and make a missing value indicator.
+
+# read in data
+mi_dat <- read.csv("../../Data/cogprimary.csv")
+
+# this sections creates NA rows in outcomes
+# when all patient data is missing at a time point
+
+
+# extract baseline data
+mi_baseline = mi_dat %>% 
+  filter(rc_trial_time == 1) %>% 
+  select(-c(rc_trial_time, cogmeanz_full)) 
+
+# observed outcome data
+mi_all_times = mi_dat %>% 
+  select(id_mask, rc_trial_time, cogmeanz_full)
+
+# all times for all patients
+all_times = expand.grid(rc_trial_time = unique(mi_all_times$rc_trial_time), 
+                        id_mask = mi_baseline$id_mask)
+
+# reconstruct data with NA rows
+pmm_reconstructed <- all_times %>% 
+  left_join(mi_all_times) %>% 
+  left_join(mi_baseline) %>% 
+  mutate(id_mask = as.integer(id_mask)) %>% 
+  mutate(time_group_int = interaction(rc_trial_time,group_type_id)) %>%
+  # generate indicator for missingness
+  mutate(na_flag=ifelse(is.na(cogmeanz_full),1,0 ))
+
+# Keep idmask, rctrialtime, missing flag
+pmm_missing <- pmm_reconstructed %>%
+  dplyr::select(id_mask, rc_trial_time, na_flag) 
+pmm_missing$rc_trial_time=factor(pmm_missing$rc_trial_time)
+
+
+pmm_imputed_data <- complete(imp_mids, action="long", include=TRUE)
+
+# Merge with na_flag data
+pmm_imputed_data <- pmm_imputed_data %>%
+  left_join(pmm_missing, by=c("id_mask", "rc_trial_time"))
+
+```
+
+## Scenario 2: Constant intervention
+
+
+People who did not return in the intervention group were people whose scores would have been lower over follow-up time points. This assumes that the imputed missing values are actually lower than the imputation model predicted.
+
+
+$$MNAR \: imputed \: value = imputed \: value - constant$$
+
+This maintains the _quality_ of the change of the imputed values, but brings the mean and mean change down.
+
+
+```{r imputation_constant, echo=TRUE, message=!params$final, warning=!params$final}
+
+# Change the imputed values to .1 less
+pmm_imputed_data_loc <- pmm_imputed_data %>%
+  mutate(cogmeanz_full = ifelse(na_flag == 1 & group_type_id == 2, 
+                                cogmeanz_full- params$mnar_coeff, 
+                                cogmeanz_full))
+
+```
+
+
+Summary of two of the imputed datasets
+
+```{r, message=!params$final, warning=!params$final}
+pmm_imputed_data_loc %>% 
+  filter(.imp %in% 1:2) %>% 
+  group_by(.imp, rc_trial_time, group_type_id) %>% 
+  summarize_at(.vars = params$response, .funs = list(Mean = mean, Sd = sd, N_obs = ~length(.)), na.rm=T)
+```
+
+
+```{r, message=!params$final, warning=!params$final}
+
+#convert back to mids object
+
+pmm_imputed_data_mids <- as.mids(pmm_imputed_data_loc, .imp = ".imp", .id = "time_id")
+
+```
+
+
+
+```{r inference-unadjusted , message=!params$final, warning=!params$final}
+
+mod_imp_pmm <- with(data = pmm_imputed_data_mids, 
+                  exp = lme4::lmer(cogmeanz_full ~  #unadjusted
+                  rc_trial_time * group_type_id + (1|id_mask)))
+
+mod_imp_0_pmm <- with(data = pmm_imputed_data_mids, 
+                  exp = lme4::lmer(cogmeanz_full ~  #unadjusted
+                  rc_trial_time + group_type_id + (1|id_mask)))
+ 
+
+em_imp_3 <- emmeans(mod_imp_pmm,  ~ rc_trial_time * group_type_id,  
+                  at = list(rc_trial_time = as.factor(c(1,12)) ))
+cont_imp_3 <- contrast(em_imp_3, interaction = c("consec", "consec"))
+em_imp_2 <- emmeans(mod_imp_pmm,  ~ rc_trial_time * group_type_id,  
+                  at = list(rc_trial_time = as.factor(c(1,11)) ))
+cont_imp_2 <- contrast(em_imp_2, interaction = c("consec", "consec"))
+em_imp_1 <- emmeans(mod_imp_pmm,  ~ rc_trial_time * group_type_id,  
+                  at = list(rc_trial_time = as.factor(c(1,10)) ))
+cont_imp_1 <- contrast(em_imp_1, interaction = c("consec", "consec"))
+
+cond_sum <- bind_rows(summary(cont_imp_1), 
+                      summary(cont_imp_2), 
+                      summary(cont_imp_3) )
+CI_imp <- bind_rows(confint(cont_imp_1), 
+                    confint(cont_imp_2),
+                    confint(cont_imp_3) ) %>%
+  dplyr::select(!c(estimate:df)) 
+cond_sum <- cond_sum %>%
+  left_join(CI_imp) 
+
+
+aov_pmm = anova(mod_imp_pmm,mod_imp_0_pmm)
+anova_call <- aov_pmm$out$`1 ~~ 2`$result %>%  as.data.frame()
+res_tab <- data.frame(response = "cogmeansz_full_ppm3",
+                      adjusted = "No",
+                      comparison = cond_sum$rc_trial_time_consec,
+                      did = round(cond_sum$estimate, 3), 
+                      LCL = round(CI_imp$asymp.LCL, 3),
+                      UCL = round(CI_imp$asymp.UCL,3),
+                      zstat = cond_sum$z.ratio,
+                      pz = cond_sum$p.value,
+                      Fstat = paste0(round(anova_call$F.value,3)," (",
+                                       round(anova_call$df1,0),",",round(anova_call$df2,0), ")"),
+                      p.value = ifelse (anova_call$`P(>F)` < 0.001, "<0.001", paste("= ",round(anova_call$`P(>F)`,3))))
+
+# make NA the f and p for the change to 12 months and change to 24 months
+res_tab[1:2,9:10]<-NA
+
+
+evidence_unadj = ifelse(res_tab$p.value[3]<0.05, "evidence", "no evidence")
+
+```
+
+_Estimates of Group Differences in Change at each Follow up_
+
+```{r, message=!params$final, warning=!params$final}
+res_tab
+```
+
+
+
+
+
+
+```{r, message=!params$final, warning=!params$final}
+
+# calculate all ems by time and group
+group_time_ems <- emmeans(mod_imp_pmm,  ~ group_type_id + rc_trial_time)
+
+# contrast to baseline by group
+comp_to_baseline <- contrast(group_time_ems, rc_trial_time , "trt.vs.ctrl", by=  "group_type_id")
+
+
+to_bl_plot_df <- cbind(summary(comp_to_baseline)[,1:3], 
+                       confint(comp_to_baseline)[,6:7], 
+                       `Visit (Years)` = rep(c(1:3), 2))
+# add baseline 0
+to_bl_plot_df[7:8,] <- NA
+to_bl_plot_df$group_type_id[7:8] = c(1,2)
+to_bl_plot_df$estimate[7:8] = c(0,0)
+to_bl_plot_df$`Visit (Years)`[7:8] = 0
+
+
+to_bl_plot_df %>% 
+  ggplot(aes(`Visit (Years)`, estimate,color=factor(group_type_id), group=factor(group_type_id))) + 
+  geom_point() + 
+  geom_line()+
+  geom_linerange(aes(ymin=asymp.LCL, ymax=asymp.UCL), size=2, alpha=.5) + 
+  theme_classic() + 
+  ylab("Mean change from baseline") +
+  scale_color_discrete(name="Randomisation Group")  + 
+   theme(legend.position = "bottom") 
+
+ggsave(file = paste0(params$response,"_",params$data,"_pmm2_plot.png"), width = 12, height = 8, units = "cm")
+
+
+
+to_bl_plot_df %>% 
+  transmute(group_type_id, `Visit (Years)`,
+         estimate,
+         LCL = asymp.LCL, UCL = asymp.UCL) %>% 
+  arrange(`Visit (Years)`,group_type_id) %>% 
+write.csv(file = paste0(params$response,"_",params$data,"_pmm2_plotdata.csv"), row.names = FALSE)
+
+
+```
+
+
+
+
+Now loop to see how much we would have to change to remove the effect (significance?)
+
+```{r, echo=F, warning=F, message=F}
+res_all <- data.frame()
+  
+for(delta in c(0, 0.1, 0.2, 0.3, 0.35, 0.4)) {
+  
+  # Change the imputed values to delta less
+  pmm_imputed_data_loc <- pmm_imputed_data %>%
+    mutate(cogmeanz_full = ifelse(na_flag == 1 & group_type_id == 2, 
+                                  cogmeanz_full - delta, 
+                                  cogmeanz_full))
+  
+  
+  pmm_imputed_data_mids = as.mids(pmm_imputed_data_loc)
+  
+  output =
+    with(data = pmm_imputed_data_mids, 
+         exp = lme4::lmer(cogmeanz_full ~  #unadjusted
+                            rc_trial_time * group_type_id + (1|id_mask)))
+  output0 =
+    with(data = pmm_imputed_data_mids, 
+         exp = lme4::lmer(cogmeanz_full ~  #unadjusted
+                            rc_trial_time + group_type_id + (1|id_mask)))
+  
+  
+  em_imp_3 <- emmeans(output,  ~ rc_trial_time * group_type_id,  
+                      at = list(rc_trial_time = as.factor(c(1,12)) ))
+  cont_imp_3 <- contrast(em_imp_3, interaction = c("consec", "consec"))
+
+  cond_sum <- summary(cont_imp_3) %>%
+    left_join(confint(cont_imp_3))
+  
+  aov_pmm = anova(output,output0)
+  anova_call <- aov_pmm$out$`1 ~~ 2`$result %>%  as.data.frame()
+  table <- data.frame(response = paste0("cogmeansz_full_ppm3 ", delta) ,
+                        adjusted = "No",
+                        comparison = cond_sum$rc_trial_time_consec,
+                        did = round(cond_sum$estimate, 3), 
+                        LCL = round(cond_sum$asymp.LCL, 3),
+                        UCL = round(cond_sum$asymp.UCL,3),
+                        zstat = cond_sum$z.ratio,
+                        pz = cond_sum$p.value,
+                        Fstat = paste0(round(anova_call$F.value,3)," (",
+                                       round(anova_call$df1,0),",",round(anova_call$df2,0), ")"),
+                        p.value = ifelse (anova_call$`P(>F)` < 0.001, "<0.001", 
+                                          paste("= ",round(anova_call$`P(>F)`,3))))
+  # df = rbind(df, output)
+  res_all = rbind(res_all,table)
+  }
+  
+write.csv(res_all, file = paste0(params$response,"_",params$data,"_pmm2_result.csv"), row.names = FALSE)
+
+
+  # res_all
+```
+
+
+
+
+## Method
+
+This is a preliminary analysis.
+
+This is a sensitivity analysis using the pattern mixture model (Little, 1993), assuming a mixture of MAR and missing not at random (MNAR) mechanisms for the missing data. In this analysis, missing values in the intervention group in the imputed datasets created for the MAR analysis were recalculated, assuming each value was `r !params$mnar_coeff` *lower* than the imputed values.  That is:
+
+$cogmeanz = cogmeanz - .1 \: if \: imputed$
+
+This results in no change in the *quality* of change implied by the imputed values for each person with missing values, but the means are lower, and the mean change will also be lower.
+
+Further, we calculated the effect size for a range of values of the change to calculate how much lower missing values would need to be to remove the observed effect. 
+
+See cogmeanz_imputed.html for a description of the MAR imputation, as well as the models run. 
+
+### Results
+
+```{r}
+res_all
+```
+
+
+The unadjusted difference between randomisation groups of change from baseline to three year follow up was `r res_all$did[1]` ( 95%CI: `r res_all$LCL[1]`- `r res_all$UCL[1]`) baseline standard deviations using multiple imputation assuming MAR, and `r res_all$did[2]` ( 95%CI: `r res_all$LCL[2]`- `r res_all$UCL[2]`) baseline standard deviations assuming missing values were `r params$mnar_coeff` baseline standard deviations lower than imputed values (Pattern Mixture Model). To reduce the difference between randomisation groups of change from baseline to three year follow to near zero, missing data in the intervention group would have had to be 0.3 baseline standard deviation below the level imputed under MAR, while missing data in the control group is unchanged.  
+
+
+Analysis by Nancy Briggs and Gordana Popovic on `r Sys.Date()`
+
+
+
+
+## References
+
+Li, K. H., T. E. Raghunathan, and D. B. Rubin. 1991. Large-Sample Significance Levels from  Multiply Imputed Data Using Moment-Based Statistics and an F Reference Distribution.  Journal of the American Statistical Association, 86(416): 1065–73.
+
+Little RJ. Pattern-mixture models for multivariate incomplete data. Journal of the American Statistical Association. 1993;88(421):125–134. 
+
+
+Stef van Buuren, Karin Groothuis-Oudshoorn (2011). mice: Multivariate Imputation by Chained Equations in R.
+Journal of Statistical Software, 45(3), 1-67. URL https://www.jstatsoft.org/v45/i03/.
+

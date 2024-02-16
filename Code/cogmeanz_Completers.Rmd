@@ -1,0 +1,207 @@
+---
+title: Maintain your brain, Completers only, Primary Cognitive Composite Variable
+output: html_document
+params:
+  data : "completers"
+  response : "cogmeanz_full"
+  predictors : !r c("rc_trial_time","group_type_id")
+  covariates : !r c("myb_age", "myb_gender","cl_edu_yrs","rcal_modules_sum","adri_baseline")
+  id : "id_mask"
+  final : true
+---
+
+## `r params$response`
+
+- Primary Cognitive Composite Variable
+    - Cogstate Detection
+    - Cogstate Identification
+    - Cogstate One Back
+    - Cambridge Brain Sciences Spatial (tokens) Search
+    - Cambridge Brain Sciences Grammatical Reasoning
+    - Cogstate One Card Learning
+    - Cambridge Brain Sciences Paired Associates
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+
+```{r read-data, message=FALSE, warning=FALSE}
+# read in functions and data
+source("functions.R")
+myb_dat <- read.csv(paste0("../../Data/",params$data,".csv"))
+```
+
+Inference for differences in `r params$predictors[1]`  trend by `r params$predictors[2]` for  `r params$response`
+
+
+This is the completers analysis.  In this analysis, only those who completed the 3-year follow up are included. 
+
+Update: 3 July 2022
+
+This is a preliminary analysis, and small changes to the data may be expected. (need to confirm that final changes have or have not been made.)
+
+`adri_baseline` is now included as a covariate. `adri_baseline` is a variable that is the value of `sum_newadri_bl` if it is not missing, or `adri_total` if `sum_newadri_bl` is missing.  This results in a baseline ADRI variable that has no missing values.
+
+
+## Data summary
+
+
+```{r outcome-summary, message=!params$final, warning=!params$final}
+myb_dat %>% 
+  group_by(.dots = lapply(params$predictors, as.symbol)) %>% 
+  summarize_at(.vars = params$response, .funs = list(Mean = mean, Sd = sd, N_obs = ~length(.)), na.rm=T)
+
+```
+
+
+
+```{r fit-models, message=!params$final, warning=!params$final}
+
+# if want to run
+if(!params$final){
+  
+  # run models
+  fitted_mods <- MYB_fit(params$response, params$predictors, 
+                       params$covariates, params$id, myb_dat, times = plannedtimes)
+  # save models
+  save(fitted_mods,file = paste0("../../Results/baseline_sd/",params$response,"_completers"))
+  
+} else {
+  load(file = paste0("../../Results/baseline_sd/",params$response,"_completers"))
+}
+
+
+```
+
+
+
+```{r plot-residuals, message=!params$final, warning=!params$final}
+#plot models
+
+if(!params$final){
+  lapply(fitted_mods, plot, form = cond)
+}
+```
+
+```{r print-summary, message=!params$final, warning=!params$final}
+#check summary is okay
+
+if(!params$final){
+  lapply(fitted_mods, summary)
+}
+```
+
+## Results
+
+```{r inference, message=!params$final, warning=!params$final}
+
+if(!params$final){
+  
+  # calculate CI
+  res_tab = MYB_inf(fitted_mods, params$response)
+  
+  # save models
+  write.csv(res_tab,file = paste0("../../Results/baseline_sd/",params$response,"_completers_table.csv"), row.names = FALSE)
+  
+
+  
+} else {
+  res_tab <- read.csv(file = paste0("../../Results/baseline_sd/",params$response,"_completers_table.csv"))
+  
+  
+}
+
+res <- res_tab %>% 
+  transmute(response,
+            adjusted,
+            base_3yr_did = round(planned,3),
+            LCL = round(asymp.LCL,3),
+            UCL = round(asymp.UCL,3),
+            zstat,
+            pz,
+            Chisq,
+            `p.value` = ifelse (`p.value` < 0.001, "<0.001",paste("= ",round(`p.value`,3)))
+)
+
+res
+
+
+evidence_unadj = ifelse(res_tab$p.value[1]<0.05, "evidence", "no evidence")
+evidence_adj = ifelse(res_tab$p.value[2]<0.05, "evidence", "no evidence")
+
+```
+
+```{r, message=!params$final, warning=!params$final}
+
+# calculate all ems by time and group
+group_time_ems <- emmeans(fitted_mods$unadj_mod,  ~ group_type_id + rc_trial_time)
+
+# contrast to baseline by group
+comp_to_baseline <- contrast(group_time_ems, rc_trial_time , "trt.vs.ctrl", by=  "group_type_id")
+
+
+to_bl_plot_df <- cbind(summary(comp_to_baseline)[,1:3], 
+                       confint(comp_to_baseline)[,6:7], 
+                       `Visit (Years)` = rep(c(1:3), 2))
+# add baseline 0
+to_bl_plot_df[7:8,] <- NA
+to_bl_plot_df$group_type_id[7:8] = c(1,2)
+to_bl_plot_df$estimate[7:8] = c(0,0)
+to_bl_plot_df$`Visit (Years)`[7:8] = 0
+
+
+to_bl_plot_df %>% 
+  ggplot(aes(`Visit (Years)`, estimate,color=factor(group_type_id), group=factor(group_type_id))) + 
+  geom_point() + 
+  geom_line()+
+  geom_linerange(aes(ymin=asymp.LCL, ymax=asymp.UCL), size=2, alpha=.5) + 
+  theme_classic() + 
+  ylab("Mean change from baseline") +
+  scale_color_discrete(name="Randomisation Group")  + 
+   theme(legend.position = "bottom") 
+
+ggsave(file = paste0(params$response,"_",params$data,"_plot.png"), width = 12, height = 8, units = "cm")
+
+
+
+to_bl_plot_df %>% 
+  transmute(group_type_id, `Visit (Years)`,
+         estimate,
+         LCL = asymp.LCL, UCL = asymp.UCL) %>% 
+  arrange(`Visit (Years)`,group_type_id) %>% 
+write.csv(file = paste0(params$response,"_",params$data,"_plotdata.csv"), row.names = FALSE)
+
+
+```
+
+
+## Result
+
+Covariates included in adjusted models: 
+
+  - `myb_age`: Age at Baseline 
+  - `myb_gender`: Reported gender
+  - `cl_edu_yrs`: Years of education
+  - `rcal_modules_sum`: Number of modules person was eligible for
+  - `adri_baseline`: ADRI at Baseline
+
+
+The data were restricted to those who completed the final measurement (Year 3). This means that in group 1, there were 2090 people, and group 2, there were 1484 people for a total of 3574.  If a participant was missing a value for Year 1 or 2, but returned for the Year 3 measurement, they were included in this analysis.
+
+The outcome variable is the calculated composite score from the full Baseline sample; it was *not* recalculated using only the 3574 in this analysis.
+
+A linear mixed model with a random effect for patient and fixed effects of time point, randomisation group and their interaction was run. An additional analysis including covariates of `r paste(params$covariates, collapse=", ")` was run.  We report estimates of the group difference in the change from baseline to three years follow up with 95% confidence interval, and associated Z statistic and p-value. The units of the effect size are standard deviations at baseline. 
+
+The unadjusted difference between randomisation groups of change from baseline to three year follow up was `r res$base_3yr_did[1]` ( 95%CI: `r res$LCL[1]`- `r res$UCL[1]`,Z=`r res$zstat[1]`, p`r res$pz[1]`) baseline standard deviations. 
+
+The difference between randomisation groups of change from baseline to three year follow up was `r res$base_3yr_did[2]` ( 95%CI: `r res$LCL[2]` - `r res$UCL[2]`,Z=`r res$zstat[2]`,p`r res$pz[2]`) baseline standard deviations, adjusting for `r paste(params$covariates, collapse=", ")`.
+
+
+Analysis by Nancy Briggs and Gordana Popovic on `r Sys.Date()`
+
+
+
+

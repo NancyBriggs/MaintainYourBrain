@@ -1,0 +1,250 @@
+---
+title: Maintain your brain, Primary Cognitive Composite Variable sugbroup by Age < 66
+output: html_document
+params:
+  data : "cogprimary"
+  response : "cogmeanz_full"
+  predictors : !r c("rc_trial_time","group_type_id","age_bin")
+  covariates : !r c("rcal_modules_sum", "myb_gender","cl_edu_yrs","adri_baseline")
+  id : "id_mask"
+  final : true
+---
+
+## `r params$response` by subgroups of `r params$predictors[3]`
+
+Analyses for the primary composite outcome, three-way interaction between age (<66 v.s. >=66), group and time.
+
+Age groups have been updated from the previous definition of <65 vs >=65 
+
+```{r setup, include=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r read-data, message=FALSE, warning=FALSE}
+# read in functions and data
+source("../../Programs/functions.R")
+emm_options(pbkrtest.limit = 1000)
+myb_dat <- read.csv(paste0("../../Data/",params$data,".csv")) %>% 
+  mutate(age_bin = ifelse(myb_age < 66,"< 66",">= 66"),
+         rc_trial_time = factor(rc_trial_time))
+```
+
+
+
+## Data summary
+
+
+
+```{r outcome-summary, message=!params$final, warning=!params$final}
+myb_dat %>% 
+  group_by(.dots = lapply(params$predictors, as.symbol)) %>% 
+  summarize_at(.vars = params$response, .funs = list(Mean = mean, Sd = sd, N_obs = ~length(.)), na.rm=T)
+```
+
+Confirming age groups
+
+```{r, echo=F}
+myb_dat %>% 
+  group_by(group_type_id,age_bin) %>% 
+  summarize( Min=min(myb_age), Max=max(myb_age))
+```
+
+
+```{r fit-models, message=!params$final, warning=!params$final}
+# if want to run
+if(!params$final){
+  
+  fitted_mods <- NULL
+  fitted_mods$unadj_mod <- lmer(cogmeanz_full ~ rc_trial_time * group_type_id * age_bin + 
+                                  (1|id_mask), data=myb_dat)
+  fitted_mods$unadj_null <- lmer(cogmeanz_full ~ rc_trial_time * group_type_id + age_bin + 
+                                  (1|id_mask), data=myb_dat)
+  fitted_mods$adj_mod <- lmer(cogmeanz_full ~ rc_trial_time * group_type_id * age_bin + 
+                                rcal_modules_sum + myb_gender + cl_edu_yrs + adri_baseline +
+                                  (1|id_mask), data=myb_dat)
+  fitted_mods$adj_null <- lmer(cogmeanz_full ~ rc_trial_time * group_type_id + age_bin + 
+                                rcal_modules_sum + myb_gender + cl_edu_yrs + adri_baseline +
+                                  (1|id_mask), data=myb_dat)
+  
+  save(fitted_mods,file = paste0("../../Results/Prelim/",params$response,"_age"))
+  
+} else {
+  load(file = paste0("../../Results/Prelim/",params$response,"_age"))
+}
+```
+
+
+
+```{r plot-residuals, message=!params$final, warning=!params$final}
+#plot models
+if(!params$final){
+  lapply(fitted_mods, plot, form = cond)
+}
+```
+
+```{r print-summary, message=!params$final, warning=!params$final}
+#check summary is okay
+if(!params$final){
+  lapply(fitted_mods, summary)
+}
+```
+
+## Results
+
+```{r inference, message=!params$final, warning=!params$final}
+if(!params$final){
+  
+  # unadjusted
+  anova_call <- anova(fitted_mods$unadj_null,fitted_mods$unadj_mod)
+  likrat <-  data.frame(Chisq = paste0(round(anova_call$Chisq[2],3),"(",
+                                       anova_call$Df[2],")"),
+                        pvalue = anova_call$`Pr(>Chisq)`[2])
+  
+  
+  
+  # two way int EM
+  
+  em <- emmeans(fitted_mods$unadj_mod,  ~ rc_trial_time*group_type_id |age_bin,  
+                at = list(rc_trial_time = plannedtimes) )
+  cont <- contrast(em, interaction = c("consec", "consec"))
+  CI <- confint(cont) %>% 
+    dplyr::select(age_bin, asymp.LCL, asymp.UCL) 
+    Su <- summary(cont)
+  cont <- cont %>% as.data.frame() %>% 
+    dplyr::select(age_bin, estimate) 
+  
+  res_unadj <- left_join(cont, CI)
+  res_unadj$zstat = round(Su$z.ratio,3)
+  res_unadj$pz = ifelse (Su$p.value < 0.001, "<0.001",paste("= ",round(Su$p.value,3)))
+  res_unadj$Chisq = c(likrat$Chisq, NA)
+  res_unadj$pvalue = c(likrat$pvalue, NA)
+  
+    # adjusted
+  anova_call <- anova(fitted_mods$adj_null,fitted_mods$adj_mod)
+  likrat <-  data.frame(Chisq = paste0(round(anova_call$Chisq[2],3),"(",
+                                       anova_call$Df[2],")"),
+                        pvalue = anova_call$`Pr(>Chisq)`[2])
+  em <- emmeans(fitted_mods$adj_mod,  ~ rc_trial_time*group_type_id |age_bin,  
+                at = list(rc_trial_time = plannedtimes) )
+  cont <- contrast(em, interaction = c("consec", "consec"))
+  CI <- confint(cont) %>% 
+    dplyr::select(age_bin, asymp.LCL, asymp.UCL) 
+  Su <- summary(cont)
+  cont <- cont %>% as.data.frame() %>% 
+    dplyr::select(age_bin, estimate) 
+  
+  res_adj <- left_join(cont, CI)
+  res_adj$zstat = round(Su$z.ratio,3)
+  res_adj$pz = ifelse (Su$p.value < 0.001, "<0.001",paste("= ",round(Su$p.value,3)))
+  
+  res_adj$Chisq = c(likrat$Chisq, NA)
+  res_adj$pvalue = c(likrat$pvalue, NA)
+  
+  
+  res_tab <- rbind(res_unadj, res_adj) %>% 
+     as.data.frame() %>% 
+    remove_rownames %>% 
+    mutate(response = params$response,
+           adjusted = c("No","No","Yes","Yes")) %>% 
+    transmute(response = response, adjusted, age_bin,
+              planned = estimate, asymp.LCL = asymp.LCL, asymp.UCL = asymp.UCL, 
+              zstat, pz, Chisq, p.value = pvalue)
+  
+  
+  # save models
+  write.csv(res_tab,file = paste0("../../Results/Prelim/",params$response,"_age","_table.csv"), row.names = FALSE)
+  
+  
+} else {
+  res_tab <- read.csv(file = paste0("../../Results/Prelim/",params$response,"_age","_table.csv"))
+  
+  
+}
+res <- res_tab %>% 
+  transmute(response,
+            adjusted,
+            age = age_bin,
+            base_3yr_did = round(planned,3),
+            LCL = round(asymp.LCL,3),
+            UCL = round(asymp.UCL,3),
+            zstat, 
+            pz,
+            Chisq,
+            `p.value` = ifelse (`p.value` < 0.001, "<0.001",paste("= ",round(`p.value`,3)))
+)
+res
+evidence_unadj = ifelse(res_tab$p.value[1]<0.05, "evidence", "no evidence")
+evidence_adj = ifelse(res_tab$p.value[2]<0.05, "evidence", "no evidence")
+```
+
+```{r, message=F, warning=F}
+# calculate all ems by time and group
+group_time_ems <- emmeans(fitted_mods$unadj_mod,  ~ group_type_id + rc_trial_time| age_bin)
+
+# contrast to baseline by group
+comp_to_baseline <- contrast(group_time_ems, rc_trial_time, "trt.vs.ctrl", by=  c("group_type_id", "age_bin"))
+
+time_diff <- c(1:3)
+
+to_bl_plot_df <- cbind(summary(comp_to_baseline)[,1:4], 
+                       confint(comp_to_baseline)[,7:8], 
+                       `Visit (Years)` = rep(c(1:3), 2))
+# add baseline 0
+to_bl_plot_df[13:16,] <- NA
+to_bl_plot_df$group_type_id[13:16] = c(1,2,1,2)
+to_bl_plot_df$estimate[13:16] = c(0,0,0,0)
+to_bl_plot_df$`Visit (Years)`[13:16] = 0
+to_bl_plot_df$age_bin[13:16] = c("< 66","< 66",">= 66",">= 66")
+
+to_bl_plot_df %>% 
+  ggplot(aes(`Visit (Years)`, estimate,color=factor(group_type_id), group=factor(group_type_id))) + 
+  geom_point() + 
+  geom_line()+
+  geom_linerange(aes(ymin=asymp.LCL, ymax=asymp.UCL), size=2, alpha=.5) + 
+  theme_classic() + 
+  facet_grid(~ age_bin)+ 
+  ylab("Mean change from baseline") +
+  scale_color_discrete(name="Randomisation Group")  + 
+   theme(legend.position = "bottom") 
+
+ggsave(file = paste0(params$response,"_",params$data,"_subgroupage_plot.png"), width = 12, height = 8, units = "cm")
+
+
+
+to_bl_plot_df %>% 
+  transmute(group_type_id, `Visit (Years)`,age_bin,
+         estimate,
+         LCL = asymp.LCL, UCL = asymp.UCL) %>% 
+  arrange(`Visit (Years)`,group_type_id) %>% 
+write.csv(file = paste0(params$response,"_",params$data,"_subgroupage_plotdata.csv"), row.names = FALSE)
+
+```
+
+
+## Result
+
+Covariates included in adjusted models: 
+
+  - `myb_gender`: Reported gender
+  - `cl_edu_yrs`: Years of education
+  - `adri_baseline`: ADRI at Baseline
+  - `rcal_modules_sum`: Number of modules person was eligible for
+
+
+
+A linear mixed model with a random effect for patient and fixed effects of time point, randomisation group, binary age (<66 vs >= 66) and their interaction was run. An additional analysis including covariates of `r paste(params$covariates, collapse=", ")` was run.
+
+We report p-values for the time point by randomisation group by binary age (<66 vs >= 66) three-way interaction.  We report estimates and confidence intervals for difference between randomisation groups of change from baseline to three year follow up (two-way interactions, as in the primary analysis) for those with age <66 and >=66  separately. The units of the effect size are standard deviations at baseline. 
+
+The unadjusted difference between randomisation groups of change from baseline to three year follow up was `r res$base_3yr_did[1]` ( 95%CI: `r res$LCL[1]`- `r res$UCL[1]`) baseline standard deviations for patients <66 years and `r res$base_3yr_did[2]` ( 95%CI: `r res$LCL[2]`- `r res$UCL[2]`) baseline standard deviations for patients >= 66 years at baseline. We have `r evidence_unadj` that the two-way group*time interaction is different between the age groups (p`r res$p.value[1]`; this is the 3-way interaction p-value.).  
+
+The adjusted difference between randomisation groups of change from baseline to three year follow up was `r res$base_3yr_did[3]` ( 95%CI: `r res$LCL[3]`- `r res$UCL[3]`) baseline standard deviations for patients <66 years and `r res$base_3yr_did[4]` ( 95%CI: `r res$LCL[4]`- `r res$UCL[4]`) baseline standard deviations for patients >= 66 years at baseline , adjusting for `r paste(params$covariates, collapse=", ")`. We have `r evidence_unadj` the two-way group*time interaction is different between the age groups (p`r res$p.value[1]`; this is the 3-way interaction p-value.).  
+
+
+
+
+Analysis by Nancy Briggs and Gordana Popovic on `r Sys.Date()`
+
+
+
